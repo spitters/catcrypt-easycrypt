@@ -1,7 +1,9 @@
 {
   "schema": "catcrypt-ec-export",
-  "version": 4,
+  "version": 5,
   "ec_hash": "n/a",
+  "ec_theories_digest": "40ff0c9cc684cb44a744c6da76d75878",
+  "ec_theories_files": 128,
   "source": "tests/forms.ec",
   "source_digest": "1ad339f56cab3460bf8a442a3e7d4400",
   "root": "Top",

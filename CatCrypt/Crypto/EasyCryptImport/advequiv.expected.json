@@ -1,7 +1,9 @@
 {
   "schema": "catcrypt-ec-export",
-  "version": 4,
+  "version": 5,
   "ec_hash": "n/a",
+  "ec_theories_digest": "40ff0c9cc684cb44a744c6da76d75878",
+  "ec_theories_files": 128,
   "source": "tests/advequiv.ec",
   "source_digest": "21fb647d3462e460a3e5a4f91a594682",
   "root": "Top",

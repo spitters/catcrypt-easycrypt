@@ -120,7 +120,7 @@ open Hax.JsonSize
 def schemaName : String := "catcrypt-ec-export"
 
 /-- The schema version this decoder accepts, compared for exact equality. -/
-def schemaVersion : Nat := 4
+def schemaVersion : Nat := 5
 
 /-- A decode error, tagged with the pipeline stage. -/
 def fail {α : Type} (msg : String) : Except String α :=
@@ -1584,7 +1584,7 @@ private def otpExport : Json :=
                          ("section_local", Json.arr #[])]) with
         | .error m =>
           m == "ec-import: schema version mismatch: export declares 2, this \
-                ingestion accepts 4 exactly"
+                ingestion accepts 5 exactly"
         | _ => false)
 
 -- An envelope whose schema name is not `schemaName` is rejected.

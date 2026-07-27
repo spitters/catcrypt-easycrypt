@@ -14,7 +14,7 @@ editing it.
 
 * source: `tests/functor.ec`
 * source_digest: `38fe427f5f4d6e55efc2bd6a03dd2cd8`
-* schema: `catcrypt-ec-export` version 4
+* schema: `catcrypt-ec-export` version 5
 * EasyCrypt build: `n/a`
 * theory root: `Top`
 
