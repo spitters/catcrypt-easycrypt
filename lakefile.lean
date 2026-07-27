@@ -23,10 +23,8 @@ lean_lib CatCrypt where
 -- rule sets, `Advantage`, the generic heap, and non-uniform sampling — the targets
 -- the lowering and the statement translation land on.
 --
--- Local path dependency. At publish, replace with:
---   require catcryptCore from git
---     "https://github.com/spitters/CatCrypt-core" @ "<tag>"
-require catcryptCore from "../CatCrypt-core"
+require catcryptCore from git
+  "https://github.com/spitters/CatCrypt-core" @ "0.1.0-alpha.2"
 
 -- `HaxLean.JsonSize`: the JSON size measure the two decoders recurse on, which is
 -- what makes them total `def`s rather than `partial def`s.
