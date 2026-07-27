@@ -1583,8 +1583,8 @@ private def otpExport : Json :=
                          ("skipped_not_declarations", Json.mkObj []),
                          ("section_local", Json.arr #[])]) with
         | .error m =>
-          m == "ec-import: schema version mismatch: export declares 2, this \
-                ingestion accepts 5 exactly"
+          m == s!"ec-import: schema version mismatch: export declares 2, this \
+                 ingestion accepts {schemaVersion} exactly"
         | _ => false)
 
 -- An envelope whose schema name is not `schemaName` is rejected.
