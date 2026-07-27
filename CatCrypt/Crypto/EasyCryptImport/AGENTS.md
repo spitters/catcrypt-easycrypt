@@ -1,8 +1,11 @@
 # `EasyCryptImport/` — Agent notes
 
-Editing notes for the EasyCrypt importer. `README.md` in this directory describes
-what the importer is and how to run it; this file carries the anti-patterns, the
-gotchas, the invariants, and the open work.
+Maintenance notes for the EasyCrypt importer: the anti-patterns, the gotchas,
+the fixture mechanics, the regeneration commands, the invariants, and the open
+work. Reference material for anyone modifying the package; not needed to use it.
+
+What the importer is, what it accepts and what it rests on are the repository
+root `README.md` and `docs/{FRAGMENT,TRUST,DESIGN}.md`.
 
 ## Anti-patterns
 
@@ -20,8 +23,8 @@ gotchas, the invariants, and the open work.
   evidence.
 - **DO NOT hand-edit a file under `Examples/` whose header says it is
   generated.** `EmitCheck.lean` compares the committed text with the emitter's
-  output; regenerate it with `EmitMain.lean` instead. The regeneration commands
-  are in `EmitMain.lean`'s docstring.
+  output; regenerate it with `EmitMain.lean` instead, with the commands under
+  "Regenerating the committed literals" below.
 - **DO NOT patch EasyCrypt to make the exporter work.** The exporter links
   `easycrypt.ecLib` out of tree. A patched EasyCrypt would make the trust base
   a fork rather than a release.
@@ -62,15 +65,42 @@ exist twice: in the exporter's
 copy stays invisible to the golden `#guard`s, which keep passing against the old
 bytes.
 
-`bash scripts/ec-fixture-sync.sh` is what makes that drift loud. It checks three
-things: every mirrored golden is byte-equal to the exporter's, traces to an `.ec`
-source beside that golden, and is read by an `include_str` here. It reads
-`../ec-export` (override with `EC_EXPORT_DIR`) and reports a skip when the
-exporter is not checked out. It is not wired into CI.
+`bash scripts/ec-fixture-sync.sh` is what makes that drift loud. It checks four
+things, each failing on its own: every mirrored golden is byte-equal to the
+exporter's, traces to an `.ec` source beside that golden, and is read by an
+`include_str` here; and every `*.json` under this directory is either such a
+mirror or a declared Lean-side-only input. It reads `../ec-export` (override
+with `EC_EXPORT_DIR`) and reports a skip, exit 0, when the exporter is not
+checked out. Nothing runs it automatically.
 
 The exporter's other two fixtures (`globals.expected.json`,
 `unsupported.expected.json`) exercise the export side only and have no copy here;
 the script reports them as export-side-only rather than failing.
+
+### Regenerating the committed literals
+
+`Examples/OTPGenerated.lean`, `Examples/OTPArgGenerated.lean` and
+`Examples/NegGenerated.lean` are the emitter's output, and `EmitCheck.lean`
+compares each against what the emitter prints now. A change to `Emit.lean` — to
+`emitExpr`'s named arguments above all — changes all three, so regenerate them
+in the same change:
+
+```
+lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
+  CatCrypt/Crypto/EasyCryptImport/otp.expected.json game OTP0 otp0Game \
+  CatCrypt/Crypto/EasyCryptImport/Examples/OTPGenerated.lean
+lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
+  CatCrypt/Crypto/EasyCryptImport/otp.expected.json module OTPArg otpArgModule \
+  CatCrypt/Crypto/EasyCryptImport/Examples/OTPArgGenerated.lean
+lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
+  CatCrypt/Crypto/EasyCryptImport/functor.expected.json functor Neg negFunctor \
+  CatCrypt/Crypto/EasyCryptImport/Examples/NegGenerated.lean
+```
+
+A module also declares `<decl-name>Procs`, and a functor declares
+`<decl-name>Body` and `<decl-name>BodyProcs`. `EmitMain.lean`'s docstring
+carries the same commands and the dispatch tables the command line decodes
+against.
 
 ### An EasyCrypt upgrade invalidates the fixtures
 
@@ -82,15 +112,15 @@ verbatim in the goldens. **After an EasyCrypt upgrade, regenerate the fixtures
 (both copies) and rebuild the Lean guards.** A stamp shift fails the statement
 goldens, whose binder resolution reads stamps.
 
-### The rot guard is the only importer
+### The import manifest is the only importer
 
-Nothing in `CatCrypt.Crypto` imports this directory. The example modules have no
-importer of their own, so `CatCrypt.Crypto.EasyCryptImport.All` is what keeps
-them from rotting when the AST, the lowering, the emitter or the CatCrypt core
-they target changes. That target is in the CI rot-guard list
-(`.github/workflows/ci.yml`); keep it there, and add any new module of this
-directory to `All.lean`. Building `All.lean` is also what runs every golden
-`#guard`; `All.lean`'s docstring lists the modules that carry them.
+The example modules have no importer of their own, so
+`CatCrypt.Crypto.EasyCryptImport.All` is what keeps them from rotting when the
+AST, the lowering, the emitter or the CatCrypt core they target changes. Add
+every new module of this directory to `All.lean`. Building `All.lean` is also
+what runs every golden `#guard`; `All.lean`'s docstring lists the modules that
+carry them. This repository has no CI, so that build and
+`scripts/ec-fixture-sync.sh` are run by hand.
 
 ### The LSP drops on `FormJson.lean` and `FormToProp.lean`
 
@@ -364,9 +394,10 @@ because it names a distribution no EasyCrypt game samples from.
   environment, which is where the image's procedures are bound. With a decoded
   functor that extension is the functor applied to `ProcEnv.moduleX` at the
   binder's name, rather than a hand-written game.
-- **The exporter repository has no CI.** Its golden tests are run by hand, and
-  `scripts/ec-fixture-sync.sh` is not wired into this repository's CI either, so
-  a change there is caught here only when somebody runs one of the two.
+- **Neither repository has CI.** The exporter's `dune runtest` and this
+  repository's `lake build …All` and `scripts/ec-fixture-sync.sh` are run by
+  hand, so an exporter change is caught here only when somebody runs one of
+  them.
 - **Complexity and cost annotations have no target.** There is no `SPComp`-level
   query counter or running time, so an imported concrete-security statement that
   depends on `q_H` or on a running time loses that dependence. This is a gap in
@@ -374,10 +405,11 @@ because it names a distribution no EasyCrypt game samples from.
 
 ## Cross-references
 
-- Fragment, pipeline, commands, trust boundary: `README.md` in this directory.
-- Exporter coverage, its unsupported-node list, and its golden regeneration:
-  `../ec-export/README.md`.
+- The accepted fragment and the rejected constructs: `docs/FRAGMENT.md`.
+- What is unverified and what bounds it: `docs/TRUST.md`.
+- The pipeline, the module map and the repository layout: `docs/DESIGN.md`.
+- The worked examples and the commands: `README.md` in this directory.
+- Exporter coverage and its unsupported-node list: `../ec-export/docs/COVERAGE.md`;
+  its fixtures and golden regeneration: `../ec-export/AGENTS.md`.
 - The pRHL and pHL rules an imported goal is closed with:
   `CatCryptCore.Relational.Rules`, `CatCryptCore.Unary.Rules`.
-- The tactic surface available for closing imported goals:
-  `CatCrypt/Tactics/AGENTS.md`.
