@@ -1,0 +1,10 @@
+# Lake build artifacts
+/.lake
+
+# Editor files
+.vscode/
+*.olean
+
+# OS files
+.DS_Store
+Thumbs.db

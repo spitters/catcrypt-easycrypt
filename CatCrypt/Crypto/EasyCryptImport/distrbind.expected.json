@@ -1,0 +1,1354 @@
+{
+  "schema": "catcrypt-ec-export",
+  "version": 4,
+  "ec_hash": "n/a",
+  "source": "tests/distrbind.ec",
+  "source_digest": "f590ca365473d2da9473bdcca1962fdc",
+  "root": "Top",
+  "items": [
+    {
+      "kind": "Th_module",
+      "name": "Bound",
+      "path": "Top.Bound",
+      "module": {
+        "name": "Bound",
+        "params": [],
+        "body": {
+          "kind": "ME_Structure",
+          "vars": [],
+          "procs": [
+            {
+              "name": "main",
+              "sig": {
+                "args": [],
+                "argty": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.unit",
+                  "args": []
+                },
+                "ret": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.bool",
+                  "args": []
+                }
+              },
+              "def": {
+                "kind": "FBdef",
+                "locals": [
+                  {
+                    "name": "b",
+                    "ty": {
+                      "kind": "Tconstr",
+                      "path": "Top.Pervasive.bool",
+                      "args": []
+                    }
+                  },
+                  {
+                    "name": "y",
+                    "ty": {
+                      "kind": "Tconstr",
+                      "path": "Top.Pervasive.bool",
+                      "args": []
+                    }
+                  }
+                ],
+                "body": [
+                  {
+                    "kind": "Sasgn",
+                    "lv": {
+                      "kind": "LvVar",
+                      "pv": { "kind": "PVloc", "name": "b" },
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      }
+                    },
+                    "rhs": {
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      },
+                      "kind": "Eop",
+                      "path": "Top.Pervasive.true",
+                      "targs": []
+                    }
+                  },
+                  {
+                    "kind": "Srnd",
+                    "lv": {
+                      "kind": "LvVar",
+                      "pv": { "kind": "PVloc", "name": "y" },
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      }
+                    },
+                    "distr": {
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Distr.distr",
+                        "args": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "kind": "Eapp",
+                      "f": {
+                        "ty": {
+                          "kind": "Tfun",
+                          "dom": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "cod": {
+                            "kind": "Tfun",
+                            "dom": {
+                              "kind": "Tfun",
+                              "dom": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              },
+                              "cod": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            },
+                            "cod": {
+                              "kind": "Tconstr",
+                              "path": "Top.Distr.distr",
+                              "args": [
+                                {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "kind": "Eop",
+                        "path": "Top.Distr.dmap",
+                        "targs": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          },
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "args": [
+                        {
+                          "ty": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "kind": "Eop",
+                          "path": "Top.DBool.dbool",
+                          "targs": []
+                        },
+                        {
+                          "ty": {
+                            "kind": "Tfun",
+                            "dom": {
+                              "kind": "Tconstr",
+                              "path": "Top.Pervasive.bool",
+                              "args": []
+                            },
+                            "cod": {
+                              "kind": "Tconstr",
+                              "path": "Top.Pervasive.bool",
+                              "args": []
+                            }
+                          },
+                          "kind": "Equant",
+                          "quant": "ELambda",
+                          "binders": [
+                            {
+                              "name": "b",
+                              "stamp": 86649,
+                              "ty": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            }
+                          ],
+                          "body": {
+                            "ty": {
+                              "kind": "Tconstr",
+                              "path": "Top.Pervasive.bool",
+                              "args": []
+                            },
+                            "kind": "Elocal",
+                            "name": "b",
+                            "stamp": 86649
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "ret": {
+                  "ty": {
+                    "kind": "Tconstr",
+                    "path": "Top.Pervasive.bool",
+                    "args": []
+                  },
+                  "kind": "Evar",
+                  "pv": { "kind": "PVloc", "name": "y" }
+                },
+                "uses": { "reads": [], "writes": [], "calls": [] }
+              }
+            }
+          ],
+          "modules": []
+        },
+        "oinfos": { "main": [] },
+        "sig": [
+          {
+            "name": "main",
+            "sig": {
+              "args": [],
+              "argty": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.unit",
+                "args": []
+              },
+              "ret": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.bool",
+                "args": []
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Th_module",
+      "name": "Free",
+      "path": "Top.Free",
+      "module": {
+        "name": "Free",
+        "params": [],
+        "body": {
+          "kind": "ME_Structure",
+          "vars": [],
+          "procs": [
+            {
+              "name": "main",
+              "sig": {
+                "args": [],
+                "argty": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.unit",
+                  "args": []
+                },
+                "ret": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.bool",
+                  "args": []
+                }
+              },
+              "def": {
+                "kind": "FBdef",
+                "locals": [
+                  {
+                    "name": "b",
+                    "ty": {
+                      "kind": "Tconstr",
+                      "path": "Top.Pervasive.bool",
+                      "args": []
+                    }
+                  },
+                  {
+                    "name": "y",
+                    "ty": {
+                      "kind": "Tconstr",
+                      "path": "Top.Pervasive.bool",
+                      "args": []
+                    }
+                  }
+                ],
+                "body": [
+                  {
+                    "kind": "Sasgn",
+                    "lv": {
+                      "kind": "LvVar",
+                      "pv": { "kind": "PVloc", "name": "b" },
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      }
+                    },
+                    "rhs": {
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      },
+                      "kind": "Eop",
+                      "path": "Top.Pervasive.true",
+                      "targs": []
+                    }
+                  },
+                  {
+                    "kind": "Srnd",
+                    "lv": {
+                      "kind": "LvVar",
+                      "pv": { "kind": "PVloc", "name": "y" },
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      }
+                    },
+                    "distr": {
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Distr.distr",
+                        "args": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "kind": "Eapp",
+                      "f": {
+                        "ty": {
+                          "kind": "Tfun",
+                          "dom": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "cod": {
+                            "kind": "Tfun",
+                            "dom": {
+                              "kind": "Tfun",
+                              "dom": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              },
+                              "cod": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            },
+                            "cod": {
+                              "kind": "Tconstr",
+                              "path": "Top.Distr.distr",
+                              "args": [
+                                {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "kind": "Eop",
+                        "path": "Top.Distr.dmap",
+                        "targs": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          },
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "args": [
+                        {
+                          "ty": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "kind": "Eop",
+                          "path": "Top.DBool.dbool",
+                          "targs": []
+                        },
+                        {
+                          "ty": {
+                            "kind": "Tfun",
+                            "dom": {
+                              "kind": "Tconstr",
+                              "path": "Top.Pervasive.bool",
+                              "args": []
+                            },
+                            "cod": {
+                              "kind": "Tconstr",
+                              "path": "Top.Pervasive.bool",
+                              "args": []
+                            }
+                          },
+                          "kind": "Equant",
+                          "quant": "ELambda",
+                          "binders": [
+                            {
+                              "name": "c",
+                              "stamp": 86664,
+                              "ty": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            }
+                          ],
+                          "body": {
+                            "ty": {
+                              "kind": "Tconstr",
+                              "path": "Top.Pervasive.bool",
+                              "args": []
+                            },
+                            "kind": "Evar",
+                            "pv": { "kind": "PVloc", "name": "b" }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "ret": {
+                  "ty": {
+                    "kind": "Tconstr",
+                    "path": "Top.Pervasive.bool",
+                    "args": []
+                  },
+                  "kind": "Evar",
+                  "pv": { "kind": "PVloc", "name": "y" }
+                },
+                "uses": { "reads": [], "writes": [], "calls": [] }
+              }
+            }
+          ],
+          "modules": []
+        },
+        "oinfos": { "main": [] },
+        "sig": [
+          {
+            "name": "main",
+            "sig": {
+              "args": [],
+              "argty": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.unit",
+                "args": []
+              },
+              "ret": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.bool",
+                "args": []
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Th_module",
+      "name": "Bind",
+      "path": "Top.Bind",
+      "module": {
+        "name": "Bind",
+        "params": [],
+        "body": {
+          "kind": "ME_Structure",
+          "vars": [],
+          "procs": [
+            {
+              "name": "main",
+              "sig": {
+                "args": [],
+                "argty": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.unit",
+                  "args": []
+                },
+                "ret": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.bool",
+                  "args": []
+                }
+              },
+              "def": {
+                "kind": "FBdef",
+                "locals": [
+                  {
+                    "name": "x",
+                    "ty": {
+                      "kind": "Tconstr",
+                      "path": "Top.Pervasive.bool",
+                      "args": []
+                    }
+                  }
+                ],
+                "body": [
+                  {
+                    "kind": "Srnd",
+                    "lv": {
+                      "kind": "LvVar",
+                      "pv": { "kind": "PVloc", "name": "x" },
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      }
+                    },
+                    "distr": {
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Distr.distr",
+                        "args": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "kind": "Eapp",
+                      "f": {
+                        "ty": {
+                          "kind": "Tfun",
+                          "dom": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "cod": {
+                            "kind": "Tfun",
+                            "dom": {
+                              "kind": "Tfun",
+                              "dom": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              },
+                              "cod": {
+                                "kind": "Tconstr",
+                                "path": "Top.Distr.distr",
+                                "args": [
+                                  {
+                                    "kind": "Tconstr",
+                                    "path": "Top.Pervasive.bool",
+                                    "args": []
+                                  }
+                                ]
+                              }
+                            },
+                            "cod": {
+                              "kind": "Tconstr",
+                              "path": "Top.Distr.distr",
+                              "args": [
+                                {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "kind": "Eop",
+                        "path": "Top.Distr.dlet",
+                        "targs": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          },
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "args": [
+                        {
+                          "ty": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "kind": "Eop",
+                          "path": "Top.DBool.dbool",
+                          "targs": []
+                        },
+                        {
+                          "ty": {
+                            "kind": "Tfun",
+                            "dom": {
+                              "kind": "Tconstr",
+                              "path": "Top.Pervasive.bool",
+                              "args": []
+                            },
+                            "cod": {
+                              "kind": "Tconstr",
+                              "path": "Top.Distr.distr",
+                              "args": [
+                                {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              ]
+                            }
+                          },
+                          "kind": "Equant",
+                          "quant": "ELambda",
+                          "binders": [
+                            {
+                              "name": "b",
+                              "stamp": 86675,
+                              "ty": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            }
+                          ],
+                          "body": {
+                            "ty": {
+                              "kind": "Tconstr",
+                              "path": "Top.Distr.distr",
+                              "args": [
+                                {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              ]
+                            },
+                            "kind": "Eapp",
+                            "f": {
+                              "ty": {
+                                "kind": "Tfun",
+                                "dom": {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                },
+                                "cod": {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Distr.distr",
+                                  "args": [
+                                    {
+                                      "kind": "Tconstr",
+                                      "path": "Top.Pervasive.bool",
+                                      "args": []
+                                    }
+                                  ]
+                                }
+                              },
+                              "kind": "Eop",
+                              "path": "Top.Distr.MUnit.dunit",
+                              "targs": [
+                                {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              ]
+                            },
+                            "args": [
+                              {
+                                "ty": {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                },
+                                "kind": "Eapp",
+                                "f": {
+                                  "ty": {
+                                    "kind": "Tfun",
+                                    "dom": {
+                                      "kind": "Tconstr",
+                                      "path": "Top.Pervasive.bool",
+                                      "args": []
+                                    },
+                                    "cod": {
+                                      "kind": "Tconstr",
+                                      "path": "Top.Pervasive.bool",
+                                      "args": []
+                                    }
+                                  },
+                                  "kind": "Eop",
+                                  "path": "Top.Pervasive.[!]",
+                                  "targs": []
+                                },
+                                "args": [
+                                  {
+                                    "ty": {
+                                      "kind": "Tconstr",
+                                      "path": "Top.Pervasive.bool",
+                                      "args": []
+                                    },
+                                    "kind": "Elocal",
+                                    "name": "b",
+                                    "stamp": 86675
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "ret": {
+                  "ty": {
+                    "kind": "Tconstr",
+                    "path": "Top.Pervasive.bool",
+                    "args": []
+                  },
+                  "kind": "Evar",
+                  "pv": { "kind": "PVloc", "name": "x" }
+                },
+                "uses": { "reads": [], "writes": [], "calls": [] }
+              }
+            }
+          ],
+          "modules": []
+        },
+        "oinfos": { "main": [] },
+        "sig": [
+          {
+            "name": "main",
+            "sig": {
+              "args": [],
+              "argty": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.unit",
+                "args": []
+              },
+              "ret": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.bool",
+                "args": []
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Th_module",
+      "name": "Product",
+      "path": "Top.Product",
+      "module": {
+        "name": "Product",
+        "params": [],
+        "body": {
+          "kind": "ME_Structure",
+          "vars": [],
+          "procs": [
+            {
+              "name": "main",
+              "sig": {
+                "args": [],
+                "argty": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.unit",
+                  "args": []
+                },
+                "ret": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.bool",
+                  "args": []
+                }
+              },
+              "def": {
+                "kind": "FBdef",
+                "locals": [
+                  {
+                    "name": "p",
+                    "ty": {
+                      "kind": "Ttuple",
+                      "args": [
+                        {
+                          "kind": "Tconstr",
+                          "path": "Top.Pervasive.bool",
+                          "args": []
+                        },
+                        {
+                          "kind": "Tconstr",
+                          "path": "Top.Pervasive.bool",
+                          "args": []
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "body": [
+                  {
+                    "kind": "Srnd",
+                    "lv": {
+                      "kind": "LvVar",
+                      "pv": { "kind": "PVloc", "name": "p" },
+                      "ty": {
+                        "kind": "Ttuple",
+                        "args": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          },
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      }
+                    },
+                    "distr": {
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Distr.distr",
+                        "args": [
+                          {
+                            "kind": "Ttuple",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              },
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      "kind": "Eapp",
+                      "f": {
+                        "ty": {
+                          "kind": "Tfun",
+                          "dom": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "cod": {
+                            "kind": "Tfun",
+                            "dom": {
+                              "kind": "Tconstr",
+                              "path": "Top.Distr.distr",
+                              "args": [
+                                {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              ]
+                            },
+                            "cod": {
+                              "kind": "Tconstr",
+                              "path": "Top.Distr.distr",
+                              "args": [
+                                {
+                                  "kind": "Ttuple",
+                                  "args": [
+                                    {
+                                      "kind": "Tconstr",
+                                      "path": "Top.Pervasive.bool",
+                                      "args": []
+                                    },
+                                    {
+                                      "kind": "Tconstr",
+                                      "path": "Top.Pervasive.bool",
+                                      "args": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        "kind": "Eop",
+                        "path": "Top.Distr.`*`",
+                        "targs": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          },
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "args": [
+                        {
+                          "ty": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "kind": "Eapp",
+                          "f": {
+                            "ty": {
+                              "kind": "Tfun",
+                              "dom": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              },
+                              "cod": {
+                                "kind": "Tconstr",
+                                "path": "Top.Distr.distr",
+                                "args": [
+                                  {
+                                    "kind": "Tconstr",
+                                    "path": "Top.Pervasive.bool",
+                                    "args": []
+                                  }
+                                ]
+                              }
+                            },
+                            "kind": "Eop",
+                            "path": "Top.Distr.MUnit.dunit",
+                            "targs": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "args": [
+                            {
+                              "ty": {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              },
+                              "kind": "Eop",
+                              "path": "Top.Pervasive.true",
+                              "targs": []
+                            }
+                          ]
+                        },
+                        {
+                          "ty": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "kind": "Eop",
+                          "path": "Top.DBool.dbool",
+                          "targs": []
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "ret": {
+                  "ty": {
+                    "kind": "Tconstr",
+                    "path": "Top.Pervasive.bool",
+                    "args": []
+                  },
+                  "kind": "Eproj",
+                  "target": {
+                    "ty": {
+                      "kind": "Ttuple",
+                      "args": [
+                        {
+                          "kind": "Tconstr",
+                          "path": "Top.Pervasive.bool",
+                          "args": []
+                        },
+                        {
+                          "kind": "Tconstr",
+                          "path": "Top.Pervasive.bool",
+                          "args": []
+                        }
+                      ]
+                    },
+                    "kind": "Evar",
+                    "pv": { "kind": "PVloc", "name": "p" }
+                  },
+                  "index": 0
+                },
+                "uses": { "reads": [], "writes": [], "calls": [] }
+              }
+            }
+          ],
+          "modules": []
+        },
+        "oinfos": { "main": [] },
+        "sig": [
+          {
+            "name": "main",
+            "sig": {
+              "args": [],
+              "argty": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.unit",
+                "args": []
+              },
+              "ret": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.bool",
+                "args": []
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "Th_module",
+      "name": "Scaled",
+      "path": "Top.Scaled",
+      "module": {
+        "name": "Scaled",
+        "params": [],
+        "body": {
+          "kind": "ME_Structure",
+          "vars": [],
+          "procs": [
+            {
+              "name": "main",
+              "sig": {
+                "args": [],
+                "argty": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.unit",
+                  "args": []
+                },
+                "ret": {
+                  "kind": "Tconstr",
+                  "path": "Top.Pervasive.bool",
+                  "args": []
+                }
+              },
+              "def": {
+                "kind": "FBdef",
+                "locals": [
+                  {
+                    "name": "x",
+                    "ty": {
+                      "kind": "Tconstr",
+                      "path": "Top.Pervasive.bool",
+                      "args": []
+                    }
+                  }
+                ],
+                "body": [
+                  {
+                    "kind": "Srnd",
+                    "lv": {
+                      "kind": "LvVar",
+                      "pv": { "kind": "PVloc", "name": "x" },
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Pervasive.bool",
+                        "args": []
+                      }
+                    },
+                    "distr": {
+                      "ty": {
+                        "kind": "Tconstr",
+                        "path": "Top.Distr.distr",
+                        "args": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "kind": "Eapp",
+                      "f": {
+                        "ty": {
+                          "kind": "Tfun",
+                          "dom": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "cod": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          }
+                        },
+                        "kind": "Eop",
+                        "path": "Top.Distr.dscale",
+                        "targs": [
+                          {
+                            "kind": "Tconstr",
+                            "path": "Top.Pervasive.bool",
+                            "args": []
+                          }
+                        ]
+                      },
+                      "args": [
+                        {
+                          "ty": {
+                            "kind": "Tconstr",
+                            "path": "Top.Distr.distr",
+                            "args": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "kind": "Eapp",
+                          "f": {
+                            "ty": {
+                              "kind": "Tfun",
+                              "dom": {
+                                "kind": "Tconstr",
+                                "path": "Top.Distr.distr",
+                                "args": [
+                                  {
+                                    "kind": "Tconstr",
+                                    "path": "Top.Pervasive.bool",
+                                    "args": []
+                                  }
+                                ]
+                              },
+                              "cod": {
+                                "kind": "Tfun",
+                                "dom": {
+                                  "kind": "Tfun",
+                                  "dom": {
+                                    "kind": "Tconstr",
+                                    "path": "Top.Pervasive.bool",
+                                    "args": []
+                                  },
+                                  "cod": {
+                                    "kind": "Tconstr",
+                                    "path": "Top.Pervasive.bool",
+                                    "args": []
+                                  }
+                                },
+                                "cod": {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Distr.distr",
+                                  "args": [
+                                    {
+                                      "kind": "Tconstr",
+                                      "path": "Top.Pervasive.bool",
+                                      "args": []
+                                    }
+                                  ]
+                                }
+                              }
+                            },
+                            "kind": "Eop",
+                            "path": "Top.Distr.drestrict",
+                            "targs": [
+                              {
+                                "kind": "Tconstr",
+                                "path": "Top.Pervasive.bool",
+                                "args": []
+                              }
+                            ]
+                          },
+                          "args": [
+                            {
+                              "ty": {
+                                "kind": "Tconstr",
+                                "path": "Top.Distr.distr",
+                                "args": [
+                                  {
+                                    "kind": "Tconstr",
+                                    "path": "Top.Pervasive.bool",
+                                    "args": []
+                                  }
+                                ]
+                              },
+                              "kind": "Eop",
+                              "path": "Top.DBool.dbool",
+                              "targs": []
+                            },
+                            {
+                              "ty": {
+                                "kind": "Tfun",
+                                "dom": {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                },
+                                "cod": {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                }
+                              },
+                              "kind": "Equant",
+                              "quant": "ELambda",
+                              "binders": [
+                                {
+                                  "name": "b",
+                                  "stamp": 86701,
+                                  "ty": {
+                                    "kind": "Tconstr",
+                                    "path": "Top.Pervasive.bool",
+                                    "args": []
+                                  }
+                                }
+                              ],
+                              "body": {
+                                "ty": {
+                                  "kind": "Tconstr",
+                                  "path": "Top.Pervasive.bool",
+                                  "args": []
+                                },
+                                "kind": "Elocal",
+                                "name": "b",
+                                "stamp": 86701
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "ret": {
+                  "ty": {
+                    "kind": "Tconstr",
+                    "path": "Top.Pervasive.bool",
+                    "args": []
+                  },
+                  "kind": "Evar",
+                  "pv": { "kind": "PVloc", "name": "x" }
+                },
+                "uses": { "reads": [], "writes": [], "calls": [] }
+              }
+            }
+          ],
+          "modules": []
+        },
+        "oinfos": { "main": [] },
+        "sig": [
+          {
+            "name": "main",
+            "sig": {
+              "args": [],
+              "argty": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.unit",
+                "args": []
+              },
+              "ret": {
+                "kind": "Tconstr",
+                "path": "Top.Pervasive.bool",
+                "args": []
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "skipped_not_declarations": { "GthRequire": 1 },
+  "section_local": []
+}
