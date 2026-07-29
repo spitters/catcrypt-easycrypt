@@ -24,10 +24,12 @@ sampling and a `CatCrypt.Core.Location` are stated against.
 
 * `unit` — EasyCrypt's `unit`, the result type of a `proc` returning nothing;
 * `bool` — EasyCrypt's `bool`;
-* `fin n` — a finite scalar type, interpreted as `Fin (n + 1)`; the `+ 1`
-  makes every interpreted type inhabited, matching `SPComp.sample`'s
-  `Nonempty` requirement (EasyCrypt's uniform `duniform` over an empty type is
-  the zero sub-distribution and has no image here);
+* `fin n` — a finite scalar type of cardinality `n`, interpreted as `Fin n`;
+  the code carries a proof of `0 < n`, which makes every interpreted type
+  inhabited, matching `SPComp.sample`'s `Nonempty` requirement (EasyCrypt's
+  uniform `duniform` over an empty type is the zero sub-distribution and has no
+  image here). The proof is an `autoParam` discharged by `omega`, so a closed
+  code is written `.fin 3` with no proof term;
 * `prod a b` — pairs, EasyCrypt's `a * b`;
 * `int` — EasyCrypt's `int`, interpreted as `Int`;
 * `map a b` — a finite map from `a` to `b`, EasyCrypt's `(a, b) fmap`,
@@ -76,8 +78,8 @@ inductive EcTy where
   | unit
   /-- EasyCrypt's `bool`. -/
   | bool
-  /-- A finite scalar type, interpreted as `Fin (n + 1)`. -/
-  | fin (n : Nat)
+  /-- A finite scalar type of cardinality `n`, interpreted as `Fin n`. -/
+  | fin (n : Nat) (pos : 0 < n := by omega)
   /-- A product type, EasyCrypt's `a * b`. -/
   | prod (a b : EcTy)
   /-- EasyCrypt's `int`. -/
@@ -90,7 +92,7 @@ inductive EcTy where
 def EcTy.interp : EcTy → Type
   | .unit => Unit
   | .bool => Bool
-  | .fin n => Fin (n + 1)
+  | .fin n _ => Fin n
   | .prod a b => a.interp × b.interp
   | .int => Int
   | .map a b => List (a.interp × b.interp)
@@ -98,7 +100,7 @@ def EcTy.interp : EcTy → Type
 instance interpInhabited : (t : EcTy) → Inhabited t.interp
   | .unit => inferInstanceAs (Inhabited Unit)
   | .bool => inferInstanceAs (Inhabited Bool)
-  | .fin n => inferInstanceAs (Inhabited (Fin (n + 1)))
+  | .fin _ h => ⟨⟨0, h⟩⟩
   | .prod a b =>
       letI := interpInhabited a; letI := interpInhabited b
       inferInstanceAs (Inhabited (a.interp × b.interp))
@@ -108,7 +110,7 @@ instance interpInhabited : (t : EcTy) → Inhabited t.interp
 instance interpDecEq : (t : EcTy) → DecidableEq t.interp
   | .unit => inferInstanceAs (DecidableEq Unit)
   | .bool => inferInstanceAs (DecidableEq Bool)
-  | .fin n => inferInstanceAs (DecidableEq (Fin (n + 1)))
+  | .fin n _ => inferInstanceAs (DecidableEq (Fin n))
   | .prod a b =>
       letI := interpDecEq a; letI := interpDecEq b
       inferInstanceAs (DecidableEq (a.interp × b.interp))
@@ -120,7 +122,7 @@ instance interpDecEq : (t : EcTy) → DecidableEq t.interp
 instance interpCountable : (t : EcTy) → Countable t.interp
   | .unit => inferInstanceAs (Countable Unit)
   | .bool => inferInstanceAs (Countable Bool)
-  | .fin n => inferInstanceAs (Countable (Fin (n + 1)))
+  | .fin n _ => inferInstanceAs (Countable (Fin n))
   | .prod a b =>
       letI := interpCountable a; letI := interpCountable b
       inferInstanceAs (Countable (a.interp × b.interp))
@@ -137,14 +139,15 @@ instance interpNonempty (t : EcTy) : Nonempty t.interp := ⟨default⟩
 def EcTy.isFin : EcTy → Bool
   | .unit => true
   | .bool => true
-  | .fin _ => true
+  | .fin _ _ => true
   | .prod a b => a.isFin && b.isFin
   | .int => false
   | .map _ _ => false
 
 @[simp] theorem EcTy.isFin_unit : EcTy.unit.isFin = true := rfl
 @[simp] theorem EcTy.isFin_bool : EcTy.bool.isFin = true := rfl
-@[simp] theorem EcTy.isFin_fin (n : Nat) : (EcTy.fin n).isFin = true := rfl
+@[simp] theorem EcTy.isFin_fin (n : Nat) (h : 0 < n) :
+    (EcTy.fin n h).isFin = true := rfl
 @[simp] theorem EcTy.isFin_prod (a b : EcTy) :
     (EcTy.prod a b).isFin = (a.isFin && b.isFin) := rfl
 @[simp] theorem EcTy.isFin_int : EcTy.int.isFin = false := rfl
@@ -154,7 +157,7 @@ def EcTy.isFin : EcTy → Bool
 @[reducible] def EcTy.fintypeOfIsFin : (t : EcTy) → t.isFin = true → Fintype t.interp
   | .unit, _ => inferInstanceAs (Fintype Unit)
   | .bool, _ => inferInstanceAs (Fintype Bool)
-  | .fin n, _ => inferInstanceAs (Fintype (Fin (n + 1)))
+  | .fin n _, _ => inferInstanceAs (Fintype (Fin n))
   | .prod a b, h =>
       letI := a.fintypeOfIsFin (by simp at h; exact h.1)
       letI := b.fintypeOfIsFin (by simp at h; exact h.2)

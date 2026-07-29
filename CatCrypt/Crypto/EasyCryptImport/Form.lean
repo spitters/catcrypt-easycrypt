@@ -169,7 +169,7 @@ inductive EcTerm : EcTy → Type where
   /-- Second projection. -/
   | snd {a b : EcTy} (p : EcTerm (.prod a b)) : EcTerm b
   /-- Addition on `fin n`, wrapping. -/
-  | finAdd {n : Nat} (a b : EcTerm (.fin n)) : EcTerm (.fin n)
+  | finAdd {n : Nat} {pos : 0 < n} (a b : EcTerm (.fin n pos)) : EcTerm (.fin n pos)
   /-- A conditional term. -/
   | ite {t : EcTy} (c : EcTerm .bool) (thn els : EcTerm t) : EcTerm t
   /-- A `let` binding of a logical variable. -/

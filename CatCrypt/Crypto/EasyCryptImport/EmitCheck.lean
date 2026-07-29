@@ -189,8 +189,8 @@ other direction — the text is a term denoting the value the emitter was given 
 the pair is a round trip at that constructor. -/
 
 /-- A literal at a finite scalar type. -/
-private def covFinLit : EcExpr (.fin 2) := (EcExpr.lit (t := (EcTy.fin 2)) (1 : Fin 3))
-#guard emitExpr covFinLit == "(EcExpr.lit (t := (EcTy.fin 2)) (1 : Fin 3))"
+private def covFinLit : EcExpr (.fin 3) := (EcExpr.lit (t := (EcTy.fin 3)) (1 : Fin 3))
+#guard emitExpr covFinLit == "(EcExpr.lit (t := (EcTy.fin 3)) (1 : Fin 3))"
 
 /-- A literal at a product type. -/
 private def covProdLit : EcExpr (.prod .bool .unit) :=
@@ -209,15 +209,15 @@ private def covBand : EcExpr .bool :=
 
 /-- Equality at a finite scalar type. -/
 private def covBeq : EcExpr .bool :=
-  (EcExpr.beq (t := (EcTy.fin 2)) (EcExpr.var (EcTy.fin 2) "x") (EcExpr.var (EcTy.fin 2) "y"))
+  (EcExpr.beq (t := (EcTy.fin 3)) (EcExpr.var (EcTy.fin 3) "x") (EcExpr.var (EcTy.fin 3) "y"))
 #guard emitExpr covBeq ==
-  "(EcExpr.beq (t := (EcTy.fin 2)) (EcExpr.var (EcTy.fin 2) \"x\") (EcExpr.var (EcTy.fin 2) \"y\"))"
+  "(EcExpr.beq (t := (EcTy.fin 3)) (EcExpr.var (EcTy.fin 3) \"x\") (EcExpr.var (EcTy.fin 3) \"y\"))"
 
 /-- Pair construction. -/
-private def covPair : EcExpr (.prod .bool (.fin 2)) :=
-  (EcExpr.pair (a := EcTy.bool) (b := (EcTy.fin 2)) (EcExpr.var EcTy.bool "b") (EcExpr.var (EcTy.fin 2) "x"))
+private def covPair : EcExpr (.prod .bool (.fin 3)) :=
+  (EcExpr.pair (a := EcTy.bool) (b := (EcTy.fin 3)) (EcExpr.var EcTy.bool "b") (EcExpr.var (EcTy.fin 3) "x"))
 #guard emitExpr covPair ==
-  "(EcExpr.pair (a := EcTy.bool) (b := (EcTy.fin 2)) (EcExpr.var EcTy.bool \"b\") (EcExpr.var (EcTy.fin 2) \"x\"))"
+  "(EcExpr.pair (a := EcTy.bool) (b := (EcTy.fin 3)) (EcExpr.var EcTy.bool \"b\") (EcExpr.var (EcTy.fin 3) \"x\"))"
 
 /-- First projection. -/
 private def covFst : EcExpr .bool :=
@@ -232,14 +232,14 @@ private def covSnd : EcExpr .unit :=
   "(EcExpr.snd (a := EcTy.bool) (b := EcTy.unit) (EcExpr.var (EcTy.prod EcTy.bool EcTy.unit) \"p\"))"
 
 /-- Addition at a finite scalar type. -/
-private def covFinAdd : EcExpr (.fin 2) :=
-  (EcExpr.finAdd (n := 2) (EcExpr.var (EcTy.fin 2) "x") (EcExpr.var (EcTy.fin 2) "y"))
+private def covFinAdd : EcExpr (.fin 3) :=
+  (EcExpr.finAdd (n := 3) (EcExpr.var (EcTy.fin 3) "x") (EcExpr.var (EcTy.fin 3) "y"))
 #guard emitExpr covFinAdd ==
-  "(EcExpr.finAdd (n := 2) (EcExpr.var (EcTy.fin 2) \"x\") (EcExpr.var (EcTy.fin 2) \"y\"))"
+  "(EcExpr.finAdd (n := 3) (EcExpr.var (EcTy.fin 3) \"x\") (EcExpr.var (EcTy.fin 3) \"y\"))"
 
 /-- A sample at a finite scalar type. -/
-private def covSample : EcStmt := (EcStmt.sample (EcTy.fin 2) "x")
-#guard emitStmt covSample == "(EcStmt.sample (EcTy.fin 2) \"x\")"
+private def covSample : EcStmt := (EcStmt.sample (EcTy.fin 3) "x")
+#guard emitStmt covSample == "(EcStmt.sample (EcTy.fin 3) \"x\")"
 
 /-- A global read. -/
 private def covLoad : EcStmt := (EcStmt.load (EcGlobal.mk "Top.M.g" 3 EcTy.bool) "b")

@@ -249,7 +249,7 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
   | _, .fst p, ρ => (evalTerm p ρ).1
   | _, .snd p, ρ => (evalTerm p ρ).2
   | _, .finAdd (n := n) a b, ρ =>
-      (show Fin (n + 1) from evalTerm a ρ) + (show Fin (n + 1) from evalTerm b ρ)
+      (show Fin n from evalTerm a ρ) + (show Fin n from evalTerm b ρ)
   | _, .ite c thn els, ρ =>
       if (show Bool from evalTerm c ρ) then evalTerm thn ρ else evalTerm els ρ
   | _, .letIn (t' := t') x v body, ρ => evalTerm body (ρ.bindVar x ⟨t', evalTerm v ρ⟩)

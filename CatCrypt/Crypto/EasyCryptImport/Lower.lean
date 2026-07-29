@@ -144,7 +144,7 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
   | _, .fst p,     env => (evalExpr p env).1
   | _, .snd p,     env => (evalExpr p env).2
   | _, .finAdd (n := n) a b, env =>
-      (show Fin (n + 1) from evalExpr a env) + (show Fin (n + 1) from evalExpr b env)
+      (show Fin n from evalExpr a env) + (show Fin n from evalExpr b env)
   | _, .intAdd a b, env =>
       (show Int from evalExpr a env) + (show Int from evalExpr b env)
   | _, .intLe a b, env =>
@@ -180,9 +180,10 @@ noncomputable def EcTy.sampleFin (t : EcTy) (h : t.isFin = true) : SPComp t.inte
 @[simp] theorem sampleFin_unit (h : EcTy.unit.isFin = true) :
     EcTy.unit.sampleFin h = SPComp.sample Unit := rfl
 
-/-- Uniform sampling at the code `fin n` is uniform sampling of `Fin (n + 1)`. -/
-@[simp] theorem sampleFin_fin (n : Nat) (h : (EcTy.fin n).isFin = true) :
-    (EcTy.fin n).sampleFin h = SPComp.sample (Fin (n + 1)) := rfl
+/-- Uniform sampling at the code `fin n` is uniform sampling of `Fin n`. -/
+@[simp] theorem sampleFin_fin (n : Nat) (hn : 0 < n) (h : (EcTy.fin n hn).isFin = true) :
+    (EcTy.fin n hn).sampleFin h
+      = @SPComp.sample (Fin n) inferInstance ⟨⟨0, hn⟩⟩ := rfl
 
 /-! ## Distribution expressions
 

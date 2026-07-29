@@ -189,7 +189,7 @@ inductive EcExpr : EcTy → Type where
   /-- Second projection. -/
   | snd {a b : EcTy} (p : EcExpr (.prod a b)) : EcExpr b
   /-- Addition on `fin n`, wrapping. -/
-  | finAdd {n : Nat} (a b : EcExpr (.fin n)) : EcExpr (.fin n)
+  | finAdd {n : Nat} {pos : 0 < n} (a b : EcExpr (.fin n pos)) : EcExpr (.fin n pos)
   /-- Integer addition. -/
   | intAdd (a b : EcExpr .int) : EcExpr .int
   /-- Integer order comparison. -/

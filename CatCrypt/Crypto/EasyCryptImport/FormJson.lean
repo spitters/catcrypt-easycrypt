@@ -708,13 +708,13 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                             | .error e => .error e
                             | .ok ye => .ok (.beq xe ye)
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
-                    | .finAdd, .fin n =>
+                    | .finAdd, .fin n hn =>
                       match arr.toList.attach with
                       | [⟨x, _⟩, ⟨y, _⟩] =>
-                        match decodeTerm F (.fin n) x with
+                        match decodeTerm F (.fin n hn) x with
                         | .error e => .error e
                         | .ok xe =>
-                          match decodeTerm F (.fin n) y with
+                          match decodeTerm F (.fin n hn) y with
                           | .error e => .error e
                           | .ok ye => .ok (.finAdd xe ye)
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"

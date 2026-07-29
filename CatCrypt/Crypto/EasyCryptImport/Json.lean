@@ -322,12 +322,12 @@ def ecPrelude : DecodeTables where
   globals := []
   modPath := ""
 
-/-- Extend the tables with a finite scalar type of cardinality `n + 1`, read
-from the EasyCrypt type path `tyPath`, and its addition at `addPath`. -/
+/-- Extend the tables with a finite scalar type of cardinality `n`, read from the
+EasyCrypt type path `tyPath`, and its addition at `addPath`. -/
 def DecodeTables.withFinType (T : DecodeTables) (tyPath : String) (n : Nat)
-    (addPath : String) : DecodeTables :=
+    (addPath : String) (pos : 0 < n := by omega) : DecodeTables :=
   { T with
-    tyPaths := (tyPath, .fin n) :: T.tyPaths
+    tyPaths := (tyPath, .fin n pos) :: T.tyPaths
     opPaths := (addPath, .finAdd) :: T.opPaths }
 
 /-- Extend the tables with EasyCrypt's `int`, read from the type path
@@ -467,14 +467,14 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
         | .ok k => fail s!"unknown program-variable kind '{k}' in {pvJ.compress}"
     | .ok "Eint" =>
       match t with
-      | .fin n =>
+      | .fin n _ =>
         match getStr j "value" with
         | .error e => .error e
         | .ok s =>
           match s.toNat? with
           | none => fail s!"integer literal '{s}' is not a decimal natural"
           | some v =>
-            if h : v < n + 1 then .ok (.lit ⟨v, h⟩)
+            if h : v < n then .ok (.lit ⟨v, h⟩)
             else fail s!"integer literal {v} is out of range for fin {n}"
       | _ => fail s!"integer literal at type {repr t}: only a fin code has one"
     | .ok "Eop" =>
@@ -614,13 +614,13 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                         | .error e => .error e
                         | .ok ye => .ok (.beq xe ye)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
-                | .finAdd, .fin n =>
+                | .finAdd, .fin n hn =>
                   match arr.toList.attach with
                   | [⟨x, _⟩, ⟨y, _⟩] =>
-                    match decodeExpr T (.fin n) x with
+                    match decodeExpr T (.fin n hn) x with
                     | .error e => .error e
                     | .ok xe =>
-                      match decodeExpr T (.fin n) y with
+                      match decodeExpr T (.fin n hn) y with
                       | .error e => .error e
                       | .ok ye => .ok (.finAdd xe ye)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
@@ -1624,10 +1624,14 @@ private def jWord : Json :=
   Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str "Top.W.word"),
               ("args", Json.arr #[])]
 
+/-- The code that type node reads as. Naming it keeps the cardinality proof out
+of the argument position of a decode whose result is matched on. -/
+private def wordTy : EcTy := .fin 3
+
 /-- The tables extended with that finite scalar type, its addition, and the
 uniform distribution on it. -/
 private def wordTables : DecodeTables :=
-  (ecPrelude.withFinType "Top.W.word" 2 "Top.W.+").withUniformDistr
+  (ecPrelude.withFinType "Top.W.word" 3 "Top.W.+").withUniformDistr
     "Top.W.dword"
 
 /-- A `word`-typed local-variable read. -/
@@ -1652,8 +1656,8 @@ private def jWordAdd : Json :=
 -- Addition at a finite scalar type decodes to `finAdd`, at the cardinality the
 -- ingestion's type table records.
 #guard (match decodeStmt wordTables jWordAdd with
-        | .ok (.assign (.fin 2) "y"
-                 (.finAdd (.var (.fin 2) "x") (.var (.fin 2) "x"))) => true
+        | .ok (.assign (.fin 3) "y"
+                 (.finAdd (.var (.fin 3) "x") (.var (.fin 3) "x"))) => true
         | _ => false)
 
 -- The finite scalar type is unknown to the default tables, so the same
@@ -1683,15 +1687,15 @@ private def jWordAdd : Json :=
         | .error _ => true
         | _ => false)
 
--- A literal in range decodes at `fin 2`.
-#guard (match decodeExpr wordTables (.fin 2)
+-- A literal in range decodes at `fin 3`.
+#guard (match decodeExpr wordTables wordTy
             (Json.mkObj [("ty", jWord), ("kind", Json.str "Eint"),
                          ("value", Json.str "1")]) with
         | .ok (.lit ⟨1, _⟩) => true
         | _ => false)
 
--- An out-of-range literal at `fin 2` is rejected.
-#guard (match decodeExpr wordTables (.fin 2)
+-- An out-of-range literal at `fin 3` is rejected.
+#guard (match decodeExpr wordTables wordTy
             (Json.mkObj [("ty", jWord), ("kind", Json.str "Eint"),
                          ("value", Json.str "7")]) with
         | .error _ => true
@@ -2053,7 +2057,7 @@ private def jSampleFrom (ty : Json) (d : Json) : Json :=
 
 -- A predicate whose binder is at another code than the distribution's carrier is
 -- rejected.
-#guard (match decodeStmt (ecPrelude.withFinType "Top.W.word" 2 "Top.W.+")
+#guard (match decodeStmt (ecPrelude.withFinType "Top.W.word" 3 "Top.W.+")
             (jSampleFrom jBool
               (jDistrApp jBool "Top.Distr.DConditional.dcond"
                 #[jDistrOp jBool "Top.DBool.dbool",

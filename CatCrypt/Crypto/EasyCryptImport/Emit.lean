@@ -92,18 +92,18 @@ def emitTerms (xs : List String) : String :=
 def emitTy : EcTy → String
   | .unit => "EcTy.unit"
   | .bool => "EcTy.bool"
-  | .fin n => s!"(EcTy.fin {n})"
+  | .fin n _ => s!"(EcTy.fin {n})"
   | .prod a b => s!"(EcTy.prod {emitTy a} {emitTy b})"
   | .int => "EcTy.int"
   | .map a b => s!"(EcTy.map {emitTy a} {emitTy b})"
 
 /-- A value of `t.interp` as a Lean term at that type. A `fin n` value is printed
-as a numeral ascribed to `Fin (n + 1)`, and a map value as an association-list
-literal ascribed to the interpretation of its code. -/
+as a numeral ascribed to `Fin n`, and a map value as an association-list literal
+ascribed to the interpretation of its code. -/
 def emitVal : (t : EcTy) → t.interp → String
   | .unit, _ => "()"
   | .bool, b => match (show Bool from b) with | true => "true" | false => "false"
-  | .fin n, k => s!"({k.val} : Fin {n + 1})"
+  | .fin n _, k => s!"({k.val} : Fin {n})"
   | .prod a b, v => "(" ++ emitVal a v.1 ++ ", " ++ emitVal b v.2 ++ ")"
   | .int, z => "(" ++ toString (show Int from z) ++ " : Int)"
   | .map a b, m =>
@@ -151,7 +151,7 @@ def emitExpr : {t : EcTy} → EcExpr t → String
   | _, @EcExpr.snd a b p =>
       "(EcExpr.snd (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
         ++ emitExpr p ++ ")"
-  | _, @EcExpr.finAdd n a b =>
+  | _, @EcExpr.finAdd n _ a b =>
       "(EcExpr.finAdd (n := " ++ toString n ++ ") " ++ emitExpr a ++ " "
         ++ emitExpr b ++ ")"
   | _, .intAdd a b => "(EcExpr.intAdd " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
