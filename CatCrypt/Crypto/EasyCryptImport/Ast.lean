@@ -39,7 +39,9 @@ closed games.
   - `load g x` — the global read `x <- M.g`;
   - `store g e` — the global write `M.g <- e`;
   - `ite c thn els` — the conditional;
-  - `forN n body` — the bounded loop `for i = 0 to n-1 do body`;
+  - `forN n body` — the bounded loop that runs `body` `n` times, threading the
+    local valuation and the heap through the iterations. It binds no counter: a
+    source loop's counter is a program variable the body assigns;
   - `call p` — an argument-free call to a procedure of the enclosing game's
     procedure table, expanded by bounded inlining;
   - `callProc q s arg x` — the call `x <@ q(arg)` to the procedure registered
@@ -70,7 +72,8 @@ does not accept them:
 
 * the distribution operators outside `EcDistr`: `dnull`, `dbiased`, `dbin`,
   `duniform` over a list, `dlist`, `dfun`, `dopt`, `dfold` and `dinter`;
-* unbounded `while` loops with a runtime guard — only the bounded `forN`;
+* a loop with a runtime guard — `forN` carries an iteration count, and the
+  EasyCrypt `while` shapes that determine one are listed in `Json.lean`;
 * types outside `EcTy`, in particular real-valued and function types; see
   `Ty.lean` for what the universe covers and where finiteness is still required;
 * complexity and cost annotations (`[A : `#queries, …`]`), which have no
@@ -218,6 +221,30 @@ def EcExpr.varName : {t : EcTy} → EcExpr t → Option EcVarId
   | _, .var _ x => some x
   | _, _ => none
 
+/-- The variable an expression increments, when the expression is `x + 1` or
+`1 + x` at the integer code. The type index is quantified for the reason
+`EcExpr.litValue` gives. -/
+def EcExpr.incrOf : {t : EcTy} → EcExpr t → Option EcVarId
+  | _, .intAdd a b =>
+      match a.varName, b.litValue with
+      | some x, some (1 : Int) => some x
+      | _, _ =>
+        match b.varName, a.litValue with
+        | some x, some (1 : Int) => some x
+        | _, _ => none
+  | _, _ => none
+
+/-- The counter and the bound of a guard of the shape `x < n`, at a variable `x`
+and an integer literal `n`. EasyCrypt's strict integer order has no `EcExpr`
+constructor of its own and decodes as the negation of the reversed `≤`, which is
+the shape read here. -/
+def EcExpr.ltGuard : {t : EcTy} → EcExpr t → Option (EcVarId × Int)
+  | _, .bnot (.intLe a b) =>
+      match a.litValue, b.varName with
+      | some (n : Int), some x => some (x, n)
+      | _, _ => none
+  | _, _ => none
+
 /-- Intrinsically typed EasyCrypt distribution expressions: `EcDistr t` is a
 distribution over `t.interp`. A binder is an `EcVarId`, bound in the local
 valuation the sub-expression under it reads, which is how a distribution operator
@@ -279,6 +306,59 @@ inductive EcStmt where
   /-- The call `x <@ q(arg)` at signature `s`, resolved against the ambient
   procedure environment. -/
   | callProc (q : String) (s : EcSig) (arg : EcExpr s.arg) (x : String)
+
+/-- The counter a statement initialises and the value it gives it, when the
+statement assigns an integer literal to a local variable. -/
+def EcStmt.initOf : EcStmt → Option (String × Int)
+  | .assign t x e =>
+      match t, e.litValue with
+      | .int, some v => some (x, v)
+      | _, _ => none
+  | _ => none
+
+/-- The counter a statement increments by one, when the statement is
+`x <- x + 1`. -/
+def EcStmt.incrOf : EcStmt → Option String
+  | .assign _ x e => if e.incrOf == some (EcVarId.ofName x) then some x else none
+  | _ => none
+
+mutual
+
+/-- The local variables a statement can write, or `none` when the statement does
+not determine them. An argument-free `call` runs a procedure of the enclosing
+game's table in the caller's own valuation, and the call site names neither the
+table nor the body, so its write set is not determined here. -/
+def EcStmt.assignedLocals : EcStmt → Option (List String)
+  | .assign _ x _ => some [x]
+  | .sample _ x _ => some [x]
+  | .sampleD _ x _ => some [x]
+  | .load _ x => some [x]
+  | .store _ _ => some []
+  | .ite _ thn els =>
+      match EcStmt.assignedLocalsList thn, EcStmt.assignedLocalsList els with
+      | some a, some b => some (a ++ b)
+      | _, _ => none
+  | .forN _ body => EcStmt.assignedLocalsList body
+  | .call _ => none
+  | .callProc _ _ _ x => some [x]
+
+/-- The local variables a statement block can write, or `none` when one of its
+statements does not determine them. -/
+def EcStmt.assignedLocalsList : List EcStmt → Option (List String)
+  | [] => some []
+  | s :: rest =>
+      match s.assignedLocals, EcStmt.assignedLocalsList rest with
+      | some a, some b => some (a ++ b)
+      | _, _ => none
+
+end
+
+/-- Whether a statement block is known to leave the local variable `x`
+untouched. A block whose write set is not determined is not known to. -/
+def EcStmt.avoids (x : String) (body : List EcStmt) : Bool :=
+  match EcStmt.assignedLocalsList body with
+  | some ws => !ws.contains x
+  | none => false
 
 /-- A procedure body at a fixed signature: the formal parameter name, the
 statement body, and the return expression. -/

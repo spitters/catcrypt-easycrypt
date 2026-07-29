@@ -58,7 +58,8 @@ this without a reason that addresses both.
 `otp.expected.json`, `otpequiv.expected.json`, `forms.expected.json`,
 `hoare.expected.json`, `restr.expected.json`, `functor.expected.json`,
 `functor2.expected.json`, `advequiv.expected.json`, `globimg.expected.json`,
-`nonunif.expected.json` and `distrbind.expected.json`
+`nonunif.expected.json`, `distrbind.expected.json`, `ints.expected.json`,
+`maps.expected.json` and `loops.expected.json`
 exist twice: in the exporter's
 `tests/` directory and in this directory. The Lean side needs a local path because it reads them with
 `include_str`. When regenerating a fixture, regenerate **both copies**; a stale

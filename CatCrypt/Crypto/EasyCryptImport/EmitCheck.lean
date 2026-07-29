@@ -36,9 +36,8 @@ that equality.
 
 **Every constructor round-trips.** The one-time-pad export reaches nine AST
 constructors. Each of the others has a declaration whose body is written exactly as
-the emitter prints it, together with a `#guard` that the emitter prints that text;
-`EcStmt.forN` is among them, and has no decoder image, so its check covers the
-emitter alone. `EcStmt.sampleD` has one check per `EcDistr` constructor, and one
+the emitter prints it, together with a `#guard` that the emitter prints that text.
+`EcStmt.sampleD` has one check per `EcDistr` constructor, and one
 more at a stamped binder, which is the branch of `emitVarId` a decoded
 distribution operator reaches.
 

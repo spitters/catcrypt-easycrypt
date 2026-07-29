@@ -46,7 +46,8 @@ the lowering, or the CatCrypt core they target changes. Building it also runs th
 the exporter fixtures `otp.expected.json`, `forms.expected.json`,
 `otpequiv.expected.json`, `hoare.expected.json`, `restr.expected.json`,
 `advequiv.expected.json`, `globimg.expected.json`, `functor.expected.json`,
-`functor2.expected.json`, `nonunif.expected.json` and `distrbind.expected.json` and
-compare the result against the generated files under `Examples/` and against the
-ASTs the examples state.
+`functor2.expected.json`, `nonunif.expected.json`, `distrbind.expected.json`,
+`ints.expected.json`, `maps.expected.json` and `loops.expected.json` and compare
+the result against the generated files under `Examples/` and against the ASTs the
+examples state.
 -/

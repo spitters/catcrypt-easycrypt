@@ -2,6 +2,10 @@
 
 What imports, what does not, and why each rejected construct has no image.
 
+This describes the **decoder**: what a JSON export produced by `ec-export` turns
+into, node by node. The AST is wider in places than the decoder reaches, and
+where the two differ it is the decoder that says what an import can produce.
+
 The accepted fragment is smaller than what the exporter emits. Every construct
 outside it is rejected by name, with a decode error carrying the construct and
 the reason. None is silently degraded to something weaker that merely
@@ -11,18 +15,47 @@ typechecks.
 
 | Layer | Fragment |
 |---|---|
-| Types | `unit`, `bool`, a finite scalar type (`fin n`, of cardinality `n`, interpreted as `Fin n`), products, `int`, and finite maps (`map a b`, an association list). `EcTy.isFin` marks the finite subset — `unit`, `bool`, `fin n`, and a product of two finite codes — which is where uniform sampling and a `Location` live |
-| Expressions | variables, literals, negation, conjunction, exclusive-or, decidable equality at any type code, pair construction and projection, wrapping addition on `fin n`, integer addition and comparison, and the finite-map operations (bind a key, test membership, look up with a default). Disjunction and implication decode through their de Morgan images |
+| Types | `unit` and `bool` (`Top.Pervasive.unit` / `.bool`), `int` (`Top.Pervasive.int`), a tuple type of arity zero or two, a finite scalar type of a cardinality the ingestion's table records (`fin n`, interpreted as `Fin n`), and a finite map (`Top.FMap.fmap` at its two type arguments, interpreted as an association list). `EcTy.isFin` marks the finite subset — `unit`, `bool`, `fin n`, and a product of two finite codes — which is where uniform sampling and a `Location` live. Any other type path, and any other parameterised type constructor, is rejected by path |
+| Expressions | a local variable read; a boolean, unit, integer or finite-scalar literal; the empty finite map (`Top.FMap.empty`); negation, conjunction and exclusive-or; decidable equality at any type code; pair construction and projection; wrapping addition on `fin n`; integer addition (`Top.CoreInt.add`) and comparison (`Top.CoreInt.le`); binding a key in a finite map (`_.[_<-_]`) and testing membership (`Top.FMap.dom`, which is what `k \in m` unfolds to). Disjunction and implication decode through their de Morgan images, and the strict integer order (`Top.CoreInt.lt`) through the negation of the reversed `≤` |
+| Map lookup | `m.[k]` returns an option and `EcTy` has no option code, so it decodes only inside `oget m.[k]` or `odflt d m.[k]`, each to `EcExpr.mapGetD`. `oget`'s default is the value type's canonical inhabitant, which fixes the value EasyCrypt leaves open as `witness`; `odflt`'s is the one the source writes. The lookup on its own, and `oget` of anything else, are rejected |
 | Distributions | the uniform distribution at a finite code, `dunit`, `dmap`, `dcond`, `dlet`, the independent product ``(`*`)``, `dscale`, `drestrict`, and `dexcepted` (`d \ X`), which is `dcond` at the negated predicate — its own EasyCrypt definition. A distribution operator whose argument is a function carries the binder's identity — its source name together with EasyCrypt's uniqueness stamp — and the body is evaluated in the local valuation extended at that identity |
-| Statements | local assignment, uniform sampling at a finite code, sampling from a distribution expression, global read and write at any code, the conditional, the bounded loop `for i = 0 to n-1`, an argument-free intra-game call (inlined under a depth bound), and a call `x <@ q(a)` at a signature resolved against the ambient environment |
+| Statements | local assignment, uniform sampling at a finite code, sampling from a distribution expression, global read and write at any code, the conditional, the bounded `while` idiom below, an argument-free intra-module call (inlined under a depth bound), and a call `x <@ q(a)` at a signature resolved against the ambient environment |
 | Memory | a local variable is a meta-level valuation entry keyed by its identity — a program variable by its source name, a bound identifier by that name together with its uniqueness stamp — so a local assignment is functional rebinding and a binder cannot capture an occurrence of another identifier of its name; a module-scoped `var` is an `EcGlobal` at a CatCrypt `GLocation`, read and written by `SPComp.gget` / `SPComp.gset`, at every type code. At a finite code that cell is also a `Location` read and written by `SPComp.get` / `SPComp.set` (`lowerStmts_load_finLoc`, `lowerStmts_store_finLoc`) |
 | Modules | concrete modules with global state, module types, functors of any number of parameters (a curried Lean function on `ModuleImpl`s, one argument per parameter), and abstract modules — an adversary or oracle given only by its interface — as `ModuleImpl` parameters, so an imported game quantified over all adversaries is a Lean `∀ (A : ModuleImpl I), …` |
+
+## Loops
+
+EasyCrypt has no `for`, and `EcStmt.forN n body` carries an iteration count and
+no counter, so a `Swhile` node decodes only at the shape whose iteration count
+the block around it determines. All four conditions are required:
+
+| Condition | |
+|---|---|
+| the guard is `i < n` | `i` a program variable, `n` an integer literal |
+| the statement immediately before the loop is `i <- c` | `c` an integer literal |
+| the last statement of the body is `i <- i + 1` | or `i <- 1 + i` |
+| no other statement of the body writes `i` | and every one of them has a write set the statement itself determines |
+
+The image is `i <- c` followed by `EcStmt.forN (n - c).toNat body`, with the
+increment left in the body: the loop runs the body once per value of `i` in
+`[c, n)` and leaves `i` at `max c n`, which is what the source does. When
+`c ≥ n` the count is zero, as the guard is.
+
+A loop that differs in any one respect is a decode error naming that respect.
+Each of these is rejected: a guard whose bound is a program variable; a guard
+under `<=`, which runs one iteration more than the recognised `<`; a loop whose
+preceding statement assigns to another variable, or is not an integer-literal
+assignment at all, or does not exist because the loop opens its block; a body
+whose last statement is not the increment; a body that writes the counter
+anywhere else; and a body containing an argument-free `call`, which runs a
+procedure body in the caller's valuation, so the call site does not determine
+whether the counter is among its writes.
 
 ## Statements
 
 | Layer | Fragment |
 |---|---|
-| Terms | logical variables, literals, the expression fragment above, a module global read at a memory (`g{&m}`), and the result of the enclosing judgement (`res{1}`, `res{2}`, `res`) |
+| Terms | logical variables, literals — including an integer literal at the `int` code — a module global read at a memory (`g{&m}`), and the result of the enclosing judgement (`res{1}`, `res{2}`, `res`). The boolean operators, equality, pairs and projections, `if` and `let` are terms; integer arithmetic is not, so `res = 0` is a term and `res + 1 = 1` is not |
 | Probabilities | `Pr[q(arg) @ &m : ev]`, constants, a probability parameter, sum, product, absolute difference |
 | Formulas | the first-order skeleton, quantifiers over a type code, a memory, a probability parameter or a module type, term and memory equality, agreement of two memories on a module's footprint (`={glob M}`), `if`, `let` |
 | Judgements | the procedure-level `hoare`, `bd_hoare` and `equiv`, and probability comparisons |
@@ -75,7 +108,9 @@ module's footprint into one equality per declared `var` before the export.
 |---|---|
 | The distribution operators outside `EcDistr` (`dnull`, `dbiased`, `dbin`, `duniform` over a list, `dlist`, `dfun`, `dopt`, `dfold`, `dinter`) | a distribution operator outside the ingestion's `distrOpPaths` table cannot decode to a sample. `dbiased` and `dbin` take a real-valued argument in an expression position, and reals reach the importer only as probabilities; the rest need a list, an option or a function type, none of which `EcTy` has |
 | A distribution operator's function argument given other than as a one-binder lambda | `EcDistr`'s binder is a variable name; a predicate supplied as an operator, a composition, or a lambda of several binders has no image |
-| Unbounded `while` | it carries a runtime guard and no bound; the AST's only loop is the statically bounded one |
+| A `while` loop outside the idiom above | `EcStmt.forN` carries an iteration count, and outside that shape the guard, the body and the statement before the loop do not determine one |
+| The finite-map lookup `m.[k]` on its own | it returns an option, and `EcTy` has no option code; it decodes under `oget` or `odflt`, whose result is a value |
+| Integer arithmetic in a formula term | `EcTerm` has no integer addition or comparison; an integer literal is a term, and an applied integer operator is rejected by path |
 | Uniform sampling at a non-finite code | `SPComp.sample` is uniform over its carrier, so `EcStmt.sample` and `EcDistr.uniform` each carry a proof that the code is finite and the decoder rejects a uniform sample at `int` or at a map. A non-uniform distribution at a non-finite code is in the fragment, since `sampleFrom` needs no finiteness |
 | Complexity and cost annotations | there is no `SPComp`-level query counter or running time to state them against. An imported concrete-security statement that depends on `q_H` or on a running time loses that dependence |
 | Statement-level judgements (`hoare{ s }`, `equiv{ s₁ ~ s₂ }`) and assertions over procedure locals | their assertions range over local variables, and locals are meta-level in the lowering, so there is nothing for such an assertion to denote |

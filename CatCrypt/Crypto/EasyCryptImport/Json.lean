@@ -37,12 +37,18 @@ surfaces as an unknown `"kind"` rather than as a silent misparse.
 | JSON node | AST image |
 |---|---|
 | `Tconstr p []`, `p` in `tyPaths` | the table's `EcTy` |
+| `Tconstr p [a, b]`, `p` in `mapTyPaths` | `EcTy.map` at the two decoded arguments |
 | `Ttuple []` / `Ttuple [a, b]` | `EcTy.unit` / `EcTy.prod` |
 | `Evar` at `PVloc`, `Elocal` | `EcExpr.var` |
-| `Eint` at a `fin` code | `EcExpr.lit` |
+| `Eint` at a `fin` code or at `int` | `EcExpr.lit` |
 | `Eop p`, `p` in `constPaths` | `EcExpr.lit` |
+| `Eop p`, `p` in `emptyMapPaths`, at a `map` code | `EcExpr.lit []` |
 | `Eapp` of `bnot`/`band`/`bxor`/`beq`/`finAdd` | the matching `EcExpr` node |
 | `Eapp` of `bor`/`bimp` | the de Morgan image over `bnot`/`band` |
+| `Eapp` of integer `+` / `≤` | `EcExpr.intAdd` / `.intLe` |
+| `Eapp` of integer `<` | `EcExpr.bnot` of the reversed `.intLe` |
+| `Eapp` of `_.[_<-_]` / `dom` | `EcExpr.mapSet` / `.mapMem` |
+| `Eapp` of `oget` / `odflt` to `_.[_]` | `EcExpr.mapGetD`, at the value type's canonical inhabitant / at the given default |
 | `Etuple [a, b]`, `Eproj` at index 0 / 1 | `EcExpr.pair`, `EcExpr.fst` / `.snd` |
 | `Sasgn` to `PVloc` | `EcStmt.assign` |
 | `Sasgn` to `PVloc` of an `Evar` at `PVglob` | `EcStmt.load` |
@@ -51,6 +57,7 @@ surfaces as an unknown `"kind"` rather than as a silent misparse.
 | `Srnd` from `dunit` / `dmap` / `dcond` / `(\)` / `dlet` / `` `*` `` / `dscale` / `drestrict` | `EcStmt.sampleD` at the matching `EcDistr` |
 | `Equant` of one `ELambda` binder, as a distribution operator's function argument | the binder and body of `EcDistr.map` / `.cond` / `.letD` / `.restrict` |
 | `Sif` | `EcStmt.ite` |
+| `Swhile` of the bounded idiom, after its initialisation | `EcStmt.forN` |
 | `Scall` without an lvalue, to the enclosing module | `EcStmt.call` |
 | `Scall` with an lvalue | `EcStmt.callProc` |
 | procedure with an `FBdef` body | `EcProcAt` |
@@ -63,18 +70,31 @@ Boolean literals arrive as nullary operators (`Eop` at `Top.Pervasive.true`), an
 application is curried with an argument list, so an operator's arity is checked
 against the list length. Operator, type-constructor and distribution paths are
 dispatch keys held by the ingestion, in `DecodeTables`: `ecPrelude` holds the
-paths of EasyCrypt's boolean and unit prelude and of the distribution
-operators of the fragment, and `DecodeTables.withFinType` / `.withUniformDistr` /
-`.withDistrOp` / `.withGlobal` extend it. A path outside the tables is a decode
-error, so a distribution operator the ingestion has not registered can never
-decode to a sample, and only a nullary operator in `distrPaths` decodes to the
-uniform `EcStmt.sample`.
+paths of EasyCrypt's boolean, unit and integer prelude, of its finite maps, and
+of the distribution operators of the fragment, and
+`DecodeTables.withFinType` / `.withIntType` / `.withMapType` / `.withEmptyMap` /
+`.withUniformDistr` / `.withDistrOp` / `.withGlobal` extend it. A path outside the
+tables is a decode error, so a distribution operator the ingestion has not
+registered can never decode to a sample, and only a nullary operator in
+`distrPaths` decodes to the uniform `EcStmt.sample`.
+
+## What `oget` reads at an unbound key
+
+EasyCrypt's `oget None` is `witness`, an unspecified inhabitant of the type, and
+`EcExpr.mapGetD` takes its default as an argument. `oget m.[k]` therefore decodes
+at `EcExpr.lit default`, the canonical inhabitant `EcTy.interp` carries. This
+fixes a value EasyCrypt leaves open: a Lean theorem about the imported program is
+a theorem about that reading, and `odflt d m.[k]`, whose default the source
+writes, is the shape with no such choice in it.
 
 ## Nodes with no image
 
-* `EcStmt.forN` — the AST's only loop is the statically bounded one, and an
-  EasyCrypt `Swhile` node carries a runtime guard and no bound, so `Swhile` is
-  rejected.
+* A `Swhile` node outside the bounded idiom: `EcStmt.forN` carries an iteration
+  count, which the guard, the body and the statement before the loop have to
+  determine together. The idiom, and what each near-miss reports, is stated at
+  `DecodedItem` below.
+* The finite-map lookup `m.[k]` on its own: it returns an option, and `EcTy` has
+  no option code, so it decodes only under `oget` or `odflt`.
 * A module whose body is an `ME_Alias` — one defined as an application of another
   module — rejected by body kind: the alias names the applied module by path and
   no body sits behind it.
@@ -247,6 +267,23 @@ inductive EcOpKind where
   | beq
   /-- Addition on a finite scalar type. -/
   | finAdd
+  /-- Integer addition. -/
+  | intAdd
+  /-- The integer order, `a ≤ b`. -/
+  | intLe
+  /-- The strict integer order, decoded through `¬ (b ≤ a)`. -/
+  | intLt
+  /-- Binding a key in a finite map. -/
+  | mapSet
+  /-- Membership of a key in a finite map, EasyCrypt's `dom`. -/
+  | mapMem
+  /-- The lookup `m.[k]`, whose result is an option and which decodes only under
+  `oget` or `odflt`. -/
+  | mapLookup
+  /-- `oget m.[k]`, the lookup at the canonical inhabitant of the value type. -/
+  | mapOget
+  /-- `odflt d m.[k]`, the lookup at an explicit default. -/
+  | mapOdflt
   deriving DecidableEq, Repr
 
 /-- The distribution operators of the accepted fragment, as dispatch-table
@@ -276,8 +313,13 @@ decode error. -/
 structure DecodeTables where
   /-- Nullary type constructors and the `EcTy` code each denotes. -/
   tyPaths : List (String × EcTy)
+  /-- Binary type constructors that denote the finite map at their two type
+  arguments. -/
+  mapTyPaths : List String
   /-- Nullary operators that denote a literal. -/
   constPaths : List (String × EcVal)
+  /-- Nullary operators that denote the empty finite map. -/
+  emptyMapPaths : List String
   /-- Operators of the accepted fragment. -/
   opPaths : List (String × EcOpKind)
   /-- Nullary operators that denote the uniform distribution on their carrier. -/
@@ -292,22 +334,34 @@ structure DecodeTables where
   recognised as intra-module. -/
   modPath : String
 
-/-- The paths of EasyCrypt's boolean and unit prelude, the uniform distribution
-on `bool`, and the distribution operators of the accepted fragment. -/
+/-- The paths of EasyCrypt's boolean, unit and integer prelude, its finite maps,
+the uniform distribution on `bool`, and the distribution operators of the
+accepted fragment. -/
 def ecPrelude : DecodeTables where
   tyPaths :=
-    [("Top.Pervasive.bool", .bool), ("Top.Pervasive.unit", .unit)]
+    [("Top.Pervasive.bool", .bool), ("Top.Pervasive.unit", .unit),
+     ("Top.Pervasive.int", .int)]
+  mapTyPaths := ["Top.FMap.fmap"]
   constPaths :=
     [("Top.Pervasive.true", ⟨.bool, true⟩),
      ("Top.Pervasive.false", ⟨.bool, false⟩),
      ("Top.Pervasive.tt", ⟨.unit, ()⟩)]
+  emptyMapPaths := ["Top.FMap.empty"]
   opPaths :=
     [("Top.Pervasive.[!]", .bnot),
      ("Top.Pervasive./\\", .band),
      ("Top.Pervasive.\\/", .bor),
      ("Top.Pervasive.=>", .bimp),
      ("Top.Logic.^", .bxor),
-     ("Top.Pervasive.=", .beq)]
+     ("Top.Pervasive.=", .beq),
+     ("Top.CoreInt.add", .intAdd),
+     ("Top.CoreInt.le", .intLe),
+     ("Top.CoreInt.lt", .intLt),
+     ("Top.FMap._.[_<-_]", .mapSet),
+     ("Top.FMap._.[_]", .mapLookup),
+     ("Top.FMap.dom", .mapMem),
+     ("Top.Logic.oget", .mapOget),
+     ("Top.Logic.odflt", .mapOdflt)]
   distrPaths := ["Top.DBool.dbool"]
   distrOpPaths :=
     [("Top.Distr.MUnit.dunit", .dunit),
@@ -335,13 +389,16 @@ def DecodeTables.withFinType (T : DecodeTables) (tyPath : String) (n : Nat)
 def DecodeTables.withIntType (T : DecodeTables) (tyPath : String) : DecodeTables :=
   { T with tyPaths := (tyPath, .int) :: T.tyPaths }
 
-/-- Extend the tables with the finite map from `k` to `v`, read from the type
-path `tyPath`. An EasyCrypt `fmap` is a parameterised type constructor, and
-`decodeTy` reads no type arguments, so the key and value codes come from the
-table entry rather than from the node. -/
-def DecodeTables.withMapType (T : DecodeTables) (tyPath : String) (k v : EcTy) :
-    DecodeTables :=
-  { T with tyPaths := (tyPath, .map k v) :: T.tyPaths }
+/-- Extend the tables with a finite-map type constructor at the type path
+`tyPath`. An EasyCrypt `fmap` is a binary type constructor, and its two type
+arguments are the key and value codes `decodeTy` reads off the node. -/
+def DecodeTables.withMapType (T : DecodeTables) (tyPath : String) : DecodeTables :=
+  { T with mapTyPaths := tyPath :: T.mapTyPaths }
+
+/-- Extend the tables with a nullary operator that denotes the empty finite
+map. -/
+def DecodeTables.withEmptyMap (T : DecodeTables) (path : String) : DecodeTables :=
+  { T with emptyMapPaths := path :: T.emptyMapPaths }
 
 /-- Extend the tables with an operator that denotes the uniform distribution on
 its carrier. -/
@@ -388,17 +445,31 @@ def decodeTy (T : DecodeTables) (j : Json) : Except String EcTy :=
     match getStr j "path" with
     | .error e => .error e
     | .ok p =>
-      match getArr j "args" with
+      match _hargs : getArr j "args" with
       | .error e => .error e
       | .ok args =>
-        if !args.isEmpty then
-          fail s!"parameterised type constructor '{p}': EcTy has no type parameters"
-        else
+        if args.isEmpty then
           match List.lookup p T.tyPaths with
           | some t => .ok t
           | none =>
             fail s!"unknown type path '{p}': the ingestion's type table has no \
               entry, so the type has no EcTy code"
+        else if T.mapTyPaths.contains p then
+          match args.toList.attach with
+          | [⟨kJ, _⟩, ⟨vJ, _⟩] =>
+            match decodeTy T kJ with
+            | .error e => .error e
+            | .ok k =>
+              match decodeTy T vJ with
+              | .error e => .error e
+              | .ok v => .ok (.map k v)
+          | _ =>
+            fail s!"finite-map type constructor '{p}' applied to {args.size} \
+              arguments, expected 2"
+        else
+          fail s!"parameterised type constructor '{p}': EcTy's only parameterised \
+            code is the finite map, and the ingestion's map-type table has no \
+            entry for the path"
   | .ok "Ttuple" =>
     match _harr : getArr j "args" with
     | .error e => .error e
@@ -416,7 +487,9 @@ def decodeTy (T : DecodeTables) (j : Json) : Except String EcTy :=
   | .ok k => fail s!"unsupported type node kind '{k}' in {j.compress}"
 termination_by jsonSize j
 decreasing_by
-  exact getArr_decreases _harr (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
+  all_goals first
+    | exact getArr_decreases _hargs (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
+    | exact getArr_decreases _harr (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
 
 /-- Decode the type node the field `k` of `j` holds. -/
 def decodeTyField (T : DecodeTables) (j : Json) (k : String) : Except String EcTy := do
@@ -476,19 +549,35 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
           | some v =>
             if h : v < n then .ok (.lit ⟨v, h⟩)
             else fail s!"integer literal {v} is out of range for fin {n}"
-      | _ => fail s!"integer literal at type {repr t}: only a fin code has one"
+      | .int =>
+        match getStr j "value" with
+        | .error e => .error e
+        | .ok s =>
+          match s.toInt? with
+          | none => fail s!"integer literal '{s}' is not a decimal integer"
+          | some v => .ok (.lit v)
+      | _ =>
+        fail s!"integer literal at type {repr t}: only a fin code and the int \
+          code have one"
     | .ok "Eop" =>
       match getStr j "path" with
       | .error e => .error e
       | .ok p =>
-        match List.lookup p T.constPaths with
-        | none =>
-          fail s!"unknown nullary operator path '{p}': the ingestion's constant \
-            table has no entry, so the operator has no EcExpr image"
-        | some v =>
-          if h : v.ty = t then .ok (.lit (v.transport h))
-          else
-            fail s!"constant '{p}' has type {repr v.ty}, context expects {repr t}"
+        if T.emptyMapPaths.contains p then
+          match t with
+          | .map _ _ => .ok (.lit [])
+          | _ =>
+            fail s!"the empty finite map '{p}' at type {repr t}: only a map code \
+              has one"
+        else
+          match List.lookup p T.constPaths with
+          | none =>
+            fail s!"unknown nullary operator path '{p}': the ingestion's constant \
+              table has no entry, so the operator has no EcExpr image"
+          | some v =>
+            if h : v.ty = t then .ok (.lit (v.transport h))
+            else
+              fail s!"constant '{p}' has type {repr v.ty}, context expects {repr t}"
     | .ok "Etuple" =>
       match t with
       | .prod a b =>
@@ -624,6 +713,168 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                       | .error e => .error e
                       | .ok ye => .ok (.finAdd xe ye)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .intAdd, .int =>
+                  match arr.toList.attach with
+                  | [⟨x, _⟩, ⟨y, _⟩] =>
+                    match decodeExpr T .int x with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T .int y with
+                      | .error e => .error e
+                      | .ok ye => .ok (.intAdd xe ye)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .intLe, .bool =>
+                  match arr.toList.attach with
+                  | [⟨x, _⟩, ⟨y, _⟩] =>
+                    match decodeExpr T .int x with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T .int y with
+                      | .error e => .error e
+                      | .ok ye => .ok (.intLe xe ye)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .intLt, .bool =>
+                  match arr.toList.attach with
+                  | [⟨x, _⟩, ⟨y, _⟩] =>
+                    match decodeExpr T .int x with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T .int y with
+                      | .error e => .error e
+                      | .ok ye => .ok (.bnot (.intLe ye xe))
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .mapSet, .map a b =>
+                  match arr.toList.attach with
+                  | [⟨mJ, _⟩, ⟨kJ, _⟩, ⟨vJ, _⟩] =>
+                    match decodeExpr T (.map a b) mJ with
+                    | .error e => .error e
+                    | .ok me =>
+                      match decodeExpr T a kJ with
+                      | .error e => .error e
+                      | .ok ke =>
+                        match decodeExpr T b vJ with
+                        | .error e => .error e
+                        | .ok ve => .ok (.mapSet me ke ve)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 3"
+                | .mapMem, .bool =>
+                  match arr.toList.attach with
+                  | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                    match decodeTyField T mJ "ty" with
+                    | .error e => .error e
+                    | .ok (.map a b) =>
+                      match decodeExpr T (.map a b) mJ with
+                      | .error e => .error e
+                      | .ok me =>
+                        match decodeExpr T a kJ with
+                        | .error e => .error e
+                        | .ok ke => .ok (.mapMem me ke)
+                    | .ok u =>
+                      fail s!"'{p}' is applied to a value of type {repr u}, which \
+                        is not a finite map"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .mapLookup, _ =>
+                  fail s!"the finite-map lookup '{p}' in {j.compress}: it returns \
+                    an option, which has no EcTy code, so it decodes only as the \
+                    argument of oget or of odflt"
+                | .mapOget, u =>
+                  match arr.toList.attach with
+                  | [⟨getJ, _hgetO⟩] =>
+                    match getStr getJ "kind" with
+                    | .error e => .error e
+                    | .ok "Eapp" =>
+                      match getObj getJ "f" with
+                      | .error e => .error e
+                      | .ok gfJ =>
+                        match getStr gfJ "path" with
+                        | .error e => .error e
+                        | .ok gp =>
+                          match List.lookup gp T.opPaths with
+                          | some .mapLookup =>
+                            match _hginO : getArr getJ "args" with
+                            | .error e => .error e
+                            | .ok garr =>
+                              match garr.toList.attach with
+                              | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                                match decodeTyField T mJ "ty" with
+                                | .error e => .error e
+                                | .ok (.map a b) =>
+                                  if h : b = u then
+                                    match decodeExpr T (.map a b) mJ with
+                                    | .error e => .error e
+                                    | .ok me =>
+                                      match decodeExpr T a kJ with
+                                      | .error e => .error e
+                                      | .ok ke =>
+                                        .ok (EcExpr.castTy h (.mapGetD me ke (.lit default)))
+                                  else
+                                    fail s!"'{p}' of a lookup whose value type is \
+                                      {repr b}, context expects {repr u}"
+                                | .ok u =>
+                                  fail s!"'{p}' of a lookup in a value of type \
+                                    {repr u}, which is not a finite map"
+                              | _ =>
+                                fail s!"'{gp}' applied to {garr.size} arguments, \
+                                  expected 2"
+                          | _ =>
+                            fail s!"'{p}' applied to '{gp}' in {j.compress}: the \
+                              only argument of oget with an image is a finite-map \
+                              lookup"
+                    | .ok k =>
+                      fail s!"'{p}' applied to a node of kind '{k}' in \
+                        {j.compress}: the only argument of oget with an image is \
+                        a finite-map lookup"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .mapOdflt, u =>
+                  match arr.toList.attach with
+                  | [⟨dJ, _hdD⟩, ⟨getJ, _hgetD⟩] =>
+                    match getStr getJ "kind" with
+                    | .error e => .error e
+                    | .ok "Eapp" =>
+                      match getObj getJ "f" with
+                      | .error e => .error e
+                      | .ok gfJ =>
+                        match getStr gfJ "path" with
+                        | .error e => .error e
+                        | .ok gp =>
+                          match List.lookup gp T.opPaths with
+                          | some .mapLookup =>
+                            match _hginD : getArr getJ "args" with
+                            | .error e => .error e
+                            | .ok garr =>
+                              match garr.toList.attach with
+                              | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                                match decodeTyField T mJ "ty" with
+                                | .error e => .error e
+                                | .ok (.map a b) =>
+                                  if h : b = u then
+                                    match decodeExpr T (.map a b) mJ with
+                                    | .error e => .error e
+                                    | .ok me =>
+                                      match decodeExpr T a kJ with
+                                      | .error e => .error e
+                                      | .ok ke =>
+                                        match decodeExpr T b dJ with
+                                        | .error e => .error e
+                                        | .ok de =>
+                                          .ok (EcExpr.castTy h (.mapGetD me ke de))
+                                  else
+                                    fail s!"'{p}' of a lookup whose value type is \
+                                      {repr b}, context expects {repr u}"
+                                | .ok u =>
+                                  fail s!"'{p}' of a lookup in a value of type \
+                                    {repr u}, which is not a finite map"
+                              | _ =>
+                                fail s!"'{gp}' applied to {garr.size} arguments, \
+                                  expected 2"
+                          | _ =>
+                            fail s!"'{p}' applied to '{gp}' in {j.compress}: the \
+                              second argument of odflt has an image only as a \
+                              finite-map lookup"
+                    | .ok k =>
+                      fail s!"'{p}' applied to a node of kind '{k}' in \
+                        {j.compress}: the second argument of odflt has an image \
+                        only as a finite-map lookup"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                 | _, _ =>
                   fail s!"operator '{p}' cannot produce a value of type {repr t}"
         | .ok k =>
@@ -643,6 +894,13 @@ termination_by jsonSize j
 decreasing_by
   all_goals first
     | exact getObj_decreases _htgt
+    | exact Nat.lt_trans
+        (getArr_decreases _hginO (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
+        (getArr_decreases _harr (Array.mem_toList_iff.mp _hgetO))
+    | exact getArr_decreases _harr (Array.mem_toList_iff.mp _hdD)
+    | exact Nat.lt_trans
+        (getArr_decreases _hginD (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
+        (getArr_decreases _harr (Array.mem_toList_iff.mp _hgetD))
     | exact getArr_decreases _harr (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
 
 /-! ## Statements -/
@@ -954,8 +1212,71 @@ def decodeCallArgs (T : DecodeTables) (res : EcTy) (arr : Array Json) :
     fail s!"call with {arr.size} arguments: EcSig has one argument type, and \
       arguments are tupled up to arity two"
 
-/-- Decode an EasyCrypt instruction node. -/
-def decodeStmt (T : DecodeTables) (j : Json) : Except String EcStmt :=
+/-! ## The bounded-loop idiom
+
+EasyCrypt has no `for`, and `EcStmt.forN n body` carries an iteration count and
+no counter. A `Swhile` node therefore decodes only at the shape whose iteration
+count the block it sits in determines:
+
+* the guard is `i < n`, at a program variable `i` and an integer literal `n`;
+* the statement immediately before the loop is `i <- c`, at an integer literal
+  `c`;
+* the last statement of the body is `i <- i + 1`;
+* no other statement of the body writes `i`, and the write set of every other
+  statement of the body is determined by that statement — an argument-free
+  `call` runs a procedure body in the caller's valuation, so a body containing
+  one is rejected.
+
+The image is `i <- c` followed by `EcStmt.forN (n - c).toNat body`, with the
+increment left in the body: the loop then runs the body once per value of `i` in
+`[c, n)` and leaves `i` at `max c n`, which is what the source does. A `Swhile`
+that differs from this shape in any respect is a decode error naming the
+respect, and `decodeItem` is what produces the marker `resolveLoops` matches
+against its initialisation. -/
+
+/-- The image of an EasyCrypt instruction inside a block: a statement, or a
+`Swhile` of the recognised shape, which is a statement only once the block
+supplies the counter's initial value. -/
+inductive DecodedItem where
+  /-- An instruction whose image is a statement on its own. -/
+  | stmt (s : EcStmt)
+  /-- A while loop of the recognised shape: the counter, the bound the guard
+  compares it with, and the body, whose last statement increments the counter. -/
+  | loop (counter : String) (bound : Int) (body : List EcStmt)
+
+/-- Resolve the loops of a decoded block against their initialisations. A loop
+whose immediately preceding statement is not an integer-literal assignment to
+its counter is a decode error: the iteration count is the distance from that
+value to the guard's bound, and no other statement supplies it. -/
+def resolveLoops : List DecodedItem → Except String (List EcStmt)
+  | [] => .ok []
+  | .stmt s :: .loop x n body :: rest =>
+    match s.initOf with
+    | some (y, c) =>
+      if y = x then
+        match resolveLoops rest with
+        | .error e => .error e
+        | .ok rest' => .ok (s :: .forN (n - c).toNat body :: rest')
+      else
+        fail s!"the while loop on the counter '{x}' follows an assignment to \
+          '{y}': the statement before the loop has to give the counter its \
+          initial value, which is what fixes the iteration count"
+    | none =>
+      fail s!"the while loop on the counter '{x}' does not follow an \
+        integer-literal assignment to '{x}': the iteration count is the distance \
+        from that value to the guard's bound, and nothing else supplies it"
+  | .stmt s :: rest =>
+    match resolveLoops rest with
+    | .error e => .error e
+    | .ok rest' => .ok (s :: rest')
+  | .loop x _ _ :: _ =>
+    fail s!"the while loop on the counter '{x}' opens its block: the statement \
+      before the loop has to give the counter its initial value, which is what \
+      fixes the iteration count"
+
+/-- Decode an EasyCrypt instruction node, as a statement or as a while loop
+awaiting its initialisation. -/
+def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
   match getStr j "kind" with
   | .error e => .error e
   | .ok "Sasgn" =>
@@ -973,18 +1294,18 @@ def decodeStmt (T : DecodeTables) (j : Json) : Except String EcStmt :=
             match globalRead T rhsJ with
             | .error e => .error e
             | .ok (some g) =>
-              if g.ty = t then .ok (.load g x)
+              if g.ty = t then .ok (.stmt (.load g x))
               else
                 fail s!"global '{g.name}' is declared at type {repr g.ty} and \
                   read into a variable of type {repr t}"
             | .ok none =>
               match decodeExpr T t rhsJ with
               | .error e => .error e
-              | .ok e => .ok (.assign t x e)
+              | .ok e => .ok (.stmt (.assign t x e))
           | .glob g =>
             match decodeExpr T g.ty rhsJ with
             | .error e => .error e
-            | .ok e => .ok (.store g e)
+            | .ok e => .ok (.stmt (.store g e))
   | .ok "Srnd" =>
     match getObj j "lv" with
     | .error e => .error e
@@ -1002,8 +1323,8 @@ def decodeStmt (T : DecodeTables) (j : Json) : Except String EcStmt :=
           | .error e => .error e
           | .ok d =>
             match d.uniformFin with
-            | some h => .ok (.sample t x h.down)
-            | none => .ok (.sampleD t x d)
+            | some h => .ok (.stmt (.sample t x h.down))
+            | none => .ok (.stmt (.sampleD t x d))
   | .ok "Sif" =>
     match getObj j "cond" with
     | .error e => .error e
@@ -1014,18 +1335,63 @@ def decodeStmt (T : DecodeTables) (j : Json) : Except String EcStmt :=
         match _hthn : getArr j "then" with
         | .error e => .error e
         | .ok thnA =>
-          match thnA.toList.attach.mapM (fun ⟨s, _⟩ => decodeStmt T s) with
+          match thnA.toList.attach.mapM (fun ⟨s, _⟩ => decodeItem T s) with
           | .error e => .error e
-          | .ok thn =>
-            match _hels : getArr j "else" with
+          | .ok thnItems =>
+            match resolveLoops thnItems with
             | .error e => .error e
-            | .ok elsA =>
-              match elsA.toList.attach.mapM (fun ⟨s, _⟩ => decodeStmt T s) with
+            | .ok thn =>
+              match _hels : getArr j "else" with
               | .error e => .error e
-              | .ok els => .ok (.ite c thn els)
+              | .ok elsA =>
+                match elsA.toList.attach.mapM (fun ⟨s, _⟩ => decodeItem T s) with
+                | .error e => .error e
+                | .ok elsItems =>
+                  match resolveLoops elsItems with
+                  | .error e => .error e
+                  | .ok els => .ok (.stmt (.ite c thn els))
   | .ok "Swhile" =>
-    fail s!"while loop in {j.compress}: the AST's only loop is the statically \
-      bounded EcStmt.forN, and the schema carries no bound for a while guard"
+    match getObj j "cond" with
+    | .error e => .error e
+    | .ok condJ =>
+      match decodeExpr T .bool condJ with
+      | .error e => .error e
+      | .ok c =>
+        match c.ltGuard with
+        | none =>
+          fail s!"while guard in {j.compress}: the only while loop with an image \
+            is the bounded one, whose guard is `i < n` at a program variable `i` \
+            and an integer literal `n`"
+        | some (x, n) =>
+          if x.stamp.isSome then
+            fail s!"the while guard compares the bound identifier '{x.name}': a \
+              loop counter is a program variable, which carries no uniqueness \
+              stamp"
+          else
+            match _hbody : getArr j "body" with
+            | .error e => .error e
+            | .ok bodyA =>
+              match bodyA.toList.attach.mapM (fun ⟨s, _⟩ => decodeItem T s) with
+              | .error e => .error e
+              | .ok items =>
+                match resolveLoops items with
+                | .error e => .error e
+                | .ok body =>
+                  match body.getLast? with
+                  | none =>
+                    fail s!"the while loop on the counter '{x.name}' has an empty \
+                      body, so nothing increments the counter"
+                  | some last =>
+                    if last.incrOf ≠ some x.name then
+                      fail s!"the last statement of the while loop on the counter \
+                        '{x.name}' is not `{x.name} <- {x.name} + 1`, so the \
+                        iteration count is not the distance to the guard's bound"
+                    else if !EcStmt.avoids x.name body.dropLast then
+                      fail s!"the body of the while loop on the counter \
+                        '{x.name}' writes '{x.name}' somewhere other than its \
+                        last statement, or contains an argument-free call, whose \
+                        writes the call site does not determine"
+                    else .ok (.loop x.name n body)
   | .ok "Scall" =>
     match getStr j "proc" with
     | .error e => .error e
@@ -1037,7 +1403,7 @@ def decodeStmt (T : DecodeTables) (j : Json) : Except String EcStmt :=
         | .error e => .error e
         | .ok Json.null =>
           if argsA.isEmpty && T.modPath ≠ "" && q.startsWith T.modPath then
-            .ok (.call (lastComponent q))
+            .ok (.stmt (.call (lastComponent q)))
           else
             fail s!"call to '{q}' discards its result in {j.compress}: the \
               schema carries no result type at the call site, so only an \
@@ -1052,7 +1418,7 @@ def decodeStmt (T : DecodeTables) (j : Json) : Except String EcStmt :=
           | .ok (.loc x t) =>
             match decodeCallArgs T t argsA with
             | .error e => .error e
-            | .ok ⟨s, arg⟩ => .ok (.callProc q s arg x)
+            | .ok ⟨s, arg⟩ => .ok (.stmt (.callProc q s arg x))
   | .ok "Smatch" =>
     fail s!"match instruction in {j.compress}: the AST has no match statement"
   | .ok "Sraise" =>
@@ -1067,10 +1433,23 @@ decreasing_by
   all_goals first
     | exact getArr_decreases _hthn (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
     | exact getArr_decreases _hels (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
+    | exact getArr_decreases _hbody (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
 
 /-- Decode a statement block. -/
-def decodeStmts (T : DecodeTables) (js : List Json) : Except String (List EcStmt) :=
-  js.mapM (decodeStmt T)
+def decodeStmts (T : DecodeTables) (js : List Json) : Except String (List EcStmt) := do
+  let items ← js.mapM (decodeItem T)
+  resolveLoops items
+
+/-- Decode a single EasyCrypt instruction node. A while loop is a statement only
+inside a block, where the statement before it gives its counter an initial
+value. -/
+def decodeStmt (T : DecodeTables) (j : Json) : Except String EcStmt := do
+  match ← decodeItem T j with
+  | .stmt s => .ok s
+  | .loop x _ _ =>
+    fail s!"the while loop on the counter '{x}' stands on its own: the statement \
+      before the loop has to give the counter its initial value, which is what \
+      fixes the iteration count"
 
 /-! ## Procedures -/
 
@@ -1706,7 +2085,8 @@ private def jWordAdd : Json :=
         | .error _ => true
         | _ => false)
 
--- An unbounded while loop is rejected.
+-- A while loop whose guard is not a comparison of a counter with an integer
+-- literal is rejected: nothing bounds the number of iterations.
 #guard (match decodeStmt ecPrelude
             (Json.mkObj [("kind", Json.str "Swhile"),
                          ("cond", Json.mkObj
@@ -1752,7 +2132,67 @@ private def jTyConstr (p : String) : Json :=
 private def jTyProd (a b : Json) : Json :=
   Json.mkObj [("kind", Json.str "Ttuple"), ("args", Json.arr #[a, b])]
 
--- `int` decodes once its type path is in the table.
+/-- The type node of the binary type constructor `p` at the type nodes `a` and
+`b`. -/
+private def jTyApp (p : String) (a b : Json) : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str p),
+              ("args", Json.arr #[a, b])]
+
+/-- The `int` type node EasyCrypt's prelude writes. -/
+private def jInt : Json := jTyConstr "Top.Pervasive.int"
+
+/-- An integer literal node. -/
+private def jIntLit (v : String) : Json :=
+  Json.mkObj [("ty", jInt), ("kind", Json.str "Eint"), ("value", Json.str v)]
+
+/-- Whether an expression is the integer literal `v`. The type index is a field
+of the match, so that the literal's own type is `Int` in the comparison. -/
+private def litIsInt {t : EcTy} (e : EcExpr t) (v : Int) : Bool :=
+  match t, e.litValue with
+  | .int, some w => w == v
+  | _, _ => false
+
+/-- Whether an expression is the boolean literal `v`. -/
+private def litIsBool {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
+  match t, e.litValue with
+  | .bool, some w => w == v
+  | _, _ => false
+
+/-- Whether an expression is the empty finite map. -/
+private def litIsEmptyMap {t : EcTy} (e : EcExpr t) : Bool :=
+  match t, e.litValue with
+  | .map _ _, some m => m.isEmpty
+  | _, _ => false
+
+-- An integer literal decodes at the `int` code.
+#guard (match decodeExpr ecPrelude .int (jIntLit "7") with
+        | .ok e => litIsInt e 7
+        | _ => false)
+
+-- A negative integer literal decodes at the same code.
+#guard (match decodeExpr ecPrelude .int (jIntLit "-7") with
+        | .ok e => litIsInt e (-7)
+        | _ => false)
+
+-- A literal whose text is not a decimal integer is rejected.
+#guard (match decodeExpr ecPrelude .int (jIntLit "0x7") with
+        | .error _ => true
+        | _ => false)
+
+-- An integer literal at a code that is neither `fin` nor `int` is rejected,
+-- rather than coerced.
+#guard (match decodeExpr ecPrelude .bool
+            (Json.mkObj [("ty", jBool), ("kind", Json.str "Eint"),
+                         ("value", Json.str "1")]) with
+        | .error _ => true
+        | _ => false)
+
+-- `int` is in the prelude table.
+#guard (match decodeTy ecPrelude jInt with
+        | .ok .int => true
+        | _ => false)
+
+-- A renamed clone of `int` decodes once its type path is in the table.
 #guard (match decodeTy (ecPrelude.withIntType "Top.Int.int") (jTyConstr "Top.Int.int") with
         | .ok .int => true
         | _ => false)
@@ -1762,10 +2202,28 @@ private def jTyProd (a b : Json) : Json :=
         | .error _ => true
         | _ => false)
 
--- A finite map decodes at the key and value codes its table entry names.
-#guard (match decodeTy (ecPrelude.withMapType "Top.SmtMap.fmap" .int .bool)
-            (jTyConstr "Top.SmtMap.fmap") with
+-- A finite map decodes at the key and value codes its own type arguments carry.
+#guard (match decodeTy ecPrelude (jTyApp "Top.FMap.fmap" jInt jBool) with
         | .ok (.map .int .bool) => true
+        | _ => false)
+
+-- A map type constructor outside the table is rejected, at the same node shape.
+#guard (match decodeTy ecPrelude (jTyApp "Top.SmtMap.fmap" jInt jBool) with
+        | .error _ => true
+        | _ => false)
+
+-- and decodes once the path is registered.
+#guard (match decodeTy (ecPrelude.withMapType "Top.SmtMap.fmap")
+            (jTyApp "Top.SmtMap.fmap" jInt jBool) with
+        | .ok (.map .int .bool) => true
+        | _ => false)
+
+-- A map type constructor at one type argument is rejected: the code is binary.
+#guard (match decodeTy ecPrelude
+            (Json.mkObj [("kind", Json.str "Tconstr"),
+                         ("path", Json.str "Top.FMap.fmap"),
+                         ("args", Json.arr #[jInt])]) with
+        | .error _ => true
         | _ => false)
 
 /-- A `Srnd` node sampling the local `x` of type `ty` from the distribution at
@@ -2146,6 +2604,266 @@ private def nonunifExport : Json :=
                            (.cond (.uniform _ _) b
                              (.bnot (.bnot (.var .bool y))))],
                 ret := .var .bool "x" } => b.stamp.isSome && b == y
+        | _ => false)
+
+/-! ### Integers
+
+`ints.expected.json` is the export of a source declaring a game whose locals,
+one global and return expression are integer-valued, a game whose return
+expression compares under the strict order, and a module whose `main` returns an
+integer. -/
+
+/-- The exporter's output for the integer theory, as text. -/
+private def intsExportText : String := include_str "ints.expected.json"
+
+/-- The exporter's output for the integer theory. -/
+private def intsExport : Json :=
+  match Json.parse intsExportText with
+  | .ok j => j
+  | .error _ => Json.null
+
+-- The fixture parses.
+#guard (match intsExport with | Json.obj _ => true | _ => false)
+
+-- The integer literals, the addition, the global at an `int` code and the
+-- comparison all decode, at the qualified name the exporter gives the global.
+#guard (match importGame ecPrelude "Ints" intsExport with
+        | .ok { name := "Ints", locals := ["a", "b"], procs := [],
+                body := [.assign .int "a" zero,
+                         .assign .int "a" (.intAdd (.var .int "a") one),
+                         .store g stored,
+                         .load g' "b"],
+                ret := .intLe (.var .int "b") bound } =>
+          litIsInt zero 0 && litIsInt one 1 && litIsInt bound 1
+            && stored.varName == some (EcVarId.ofName "a")
+            && g.name == "Top.Ints./total" && g.ty == .int
+            && g'.name == "Top.Ints./total" && g'.ty == .int
+        | _ => false)
+
+-- The strict order has no `EcExpr` constructor and decodes as the negation of
+-- the reversed `≤`.
+#guard (match importGame ecPrelude "Strict" intsExport with
+        | .ok { name := "Strict", locals := ["a"], procs := [],
+                body := [.assign .int "a" two],
+                ret := .bnot (.intLe three (.var .int "a")) } =>
+          litIsInt two 2 && litIsInt three 3
+        | _ => false)
+
+-- A procedure returning an integer is not a game, and the module it belongs to
+-- declares it at that result code.
+#guard (match importGame ecPrelude "Counter" intsExport with
+        | .error _ => true
+        | _ => false)
+
+#guard (match importModule ecPrelude "Counter" intsExport with
+        | .ok M => M.interface.sig "main" == { arg := .unit, res := .int }
+        | _ => false)
+
+/-! ### Finite maps
+
+`maps.expected.json` is the export of a source declaring a game that builds a
+map, tests membership, reads a key both with `oget` and with an explicit
+default, and writes the map to a global; and a second game that reads that
+global back. -/
+
+/-- The exporter's output for the finite-map theory, as text. -/
+private def mapsExportText : String := include_str "maps.expected.json"
+
+/-- The exporter's output for the finite-map theory. -/
+private def mapsExport : Json :=
+  match Json.parse mapsExportText with
+  | .ok j => j
+  | .error _ => Json.null
+
+-- The fixture parses.
+#guard (match mapsExport with | Json.obj _ => true | _ => false)
+
+-- `empty`, `m.[k] <- v`, `k \in m`, `oget m.[k]` and `odflt d m.[k]` each decode,
+-- the last two to the same constructor at different defaults: `oget` reads the
+-- canonical inhabitant of `bool`, and `odflt true` reads the source's default.
+#guard (match importGame ecPrelude "Log" mapsExport with
+        | .ok { name := "Log", locals := ["m", "seen", "v", "w"], procs := [],
+                body := [.assign (.map .int .bool) "m" empty,
+                         .assign (.map .int .bool) "m"
+                           (.mapSet (.var (.map .int .bool) "m") k₁ tru),
+                         .assign .bool "seen"
+                           (.mapMem (.var (.map .int .bool) "m") k₂),
+                         .assign .bool "v"
+                           (.mapGetD (.var (.map .int .bool) "m") k₃ dOget),
+                         .assign .bool "w"
+                           (.mapGetD (.var (.map .int .bool) "m") k₄ dOdflt),
+                         .store g stored],
+                ret := .band (.var .bool "seen")
+                         (.band (.var .bool "v") (.var .bool "w")) } =>
+          litIsEmptyMap empty && litIsInt k₁ 1 && litIsBool tru true
+            && litIsInt k₂ 1 && litIsInt k₃ 1 && litIsInt k₄ 2
+            && litIsBool dOget false && litIsBool dOdflt true
+            && stored.varName == some (EcVarId.ofName "m")
+            && g.name == "Top.Log./log" && g.ty == .map .int .bool
+        | _ => false)
+
+-- A global at a map code is read back by `EcStmt.load`.
+#guard (match importGame ecPrelude "Reload" mapsExport with
+        | .ok { name := "Reload", locals := ["m"], procs := [],
+                body := [.load g "m"],
+                ret := .mapMem (.var (.map .int .bool) "m") k } =>
+          litIsInt k 1 && g.name == "Top.Reload./cache"
+            && g.ty == .map .int .bool
+        | _ => false)
+
+/-- The type node of a finite map from `int` to `bool`. -/
+private def jMapIntBool : Json := jTyApp "Top.FMap.fmap" jInt jBool
+
+/-- A map-typed local-variable read. -/
+private def jLocalMap (x : String) : Json :=
+  Json.mkObj [("ty", jMapIntBool), ("kind", Json.str "Evar"),
+              ("pv", Json.mkObj [("kind", Json.str "PVloc"), ("name", Json.str x)])]
+
+/-- The option type node over `bool`, which has no `EcTy` code. -/
+private def jOptBool : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Logic.option"), ("args", Json.arr #[jBool])]
+
+/-- The lookup `m.[1]`, whose own type is an option. -/
+private def jMapLookup : Json :=
+  Json.mkObj
+    [("ty", jOptBool), ("kind", Json.str "Eapp"),
+     ("f", Json.mkObj [("ty", jOptBool), ("kind", Json.str "Eop"),
+                       ("path", Json.str "Top.FMap._.[_]"),
+                       ("targs", Json.arr #[jInt, jBool])]),
+     ("args", Json.arr #[jLocalMap "m", jIntLit "1"])]
+
+/-- An application of the operator `p` to `args`, at the type node `ty`. -/
+private def jOpApp (ty : Json) (p : String) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", ty), ("kind", Json.str "Eapp"),
+     ("f", Json.mkObj [("ty", ty), ("kind", Json.str "Eop"),
+                       ("path", Json.str p), ("targs", Json.arr #[jBool])]),
+     ("args", Json.arr args)]
+
+-- Under `oget` the lookup decodes, at the canonical inhabitant of `bool`.
+#guard (match decodeExpr ecPrelude .bool
+            (jOpApp jBool "Top.Logic.oget" #[jMapLookup]) with
+        | .ok (.mapGetD (.var (.map .int .bool) "m") k d) =>
+          litIsInt k 1 && litIsBool d false
+        | _ => false)
+
+-- The lookup on its own is rejected: its result is an option, and `EcTy` has no
+-- option code.
+#guard (match decodeExpr ecPrelude .bool jMapLookup with
+        | .error _ => true
+        | _ => false)
+
+-- `oget` of anything other than a lookup is rejected.
+#guard (match decodeExpr ecPrelude .bool
+            (jOpApp jBool "Top.Logic.oget" #[jLocalBool "b"]) with
+        | .error _ => true
+        | _ => false)
+
+-- The empty map decodes at a map code.
+#guard (match decodeExpr ecPrelude (.map .int .bool)
+            (Json.mkObj [("ty", jMapIntBool), ("kind", Json.str "Eop"),
+                         ("path", Json.str "Top.FMap.empty"),
+                         ("targs", Json.arr #[jInt, jBool])]) with
+        | .ok e => litIsEmptyMap e
+        | _ => false)
+
+-- and is rejected at any other code, rather than coerced.
+#guard (match decodeExpr ecPrelude .bool
+            (Json.mkObj [("ty", jBool), ("kind", Json.str "Eop"),
+                         ("path", Json.str "Top.FMap.empty"),
+                         ("targs", Json.arr #[jInt, jBool])]) with
+        | .error _ => true
+        | _ => false)
+
+/-! ### Bounded loops
+
+`loops.expected.json` is the export of a source declaring two modules at the
+recognised `while` idiom and eight that differ from it in one respect each. Every
+rejection below is paired with the two shapes that do decode, so no rejection
+check passes because its input was malformed for an unrelated reason. -/
+
+/-- The exporter's output for the loop theory, as text. -/
+private def loopsExportText : String := include_str "loops.expected.json"
+
+/-- The exporter's output for the loop theory. -/
+private def loopsExport : Json :=
+  match Json.parse loopsExportText with
+  | .ok j => j
+  | .error _ => Json.null
+
+-- The fixture parses.
+#guard (match loopsExport with | Json.obj _ => true | _ => false)
+
+-- `i <- 0; while (i < 3) { i <- i + 1; }` decodes to the initialisation followed
+-- by three iterations of the body, the increment among them.
+#guard (match importGame ecPrelude "Bounded" loopsExport with
+        | .ok { name := "Bounded", locals := ["i"], procs := [],
+                body := [.assign .int "i" zero,
+                         .forN 3 [.assign .int "i" (.intAdd (.var .int "i") one)]],
+                ret := .intLe (.var .int "i") bound } =>
+          litIsInt zero 0 && litIsInt one 1 && litIsInt bound 3
+        | _ => false)
+
+-- A body that writes another variable, under a conditional, keeps its shape
+-- inside the loop.
+#guard (match importGame ecPrelude "Nested" loopsExport with
+        | .ok { name := "Nested", locals := ["i", "acc"], procs := [],
+                body := [.assign .bool "acc" fls,
+                         .assign .int "i" zero,
+                         .forN 2
+                           [.ite (.var .bool "acc")
+                              [.assign .bool "acc" fls']
+                              [.assign .bool "acc" tru],
+                            .assign .int "i" (.intAdd (.var .int "i") one)]],
+                ret := .var .bool "acc" } =>
+          litIsBool fls false && litIsBool fls' false && litIsBool tru true
+            && litIsInt zero 0 && litIsInt one 1
+        | _ => false)
+
+-- A guard whose bound is a program variable is rejected: the iteration count is
+-- not determined.
+#guard (match importGame ecPrelude "VarBound" loopsExport with
+        | .error _ => true
+        | _ => false)
+
+-- A loop whose preceding statement is not an integer assignment is rejected.
+#guard (match importGame ecPrelude "NoInit" loopsExport with
+        | .error _ => true
+        | _ => false)
+
+-- A loop whose preceding statement initialises another variable is rejected.
+#guard (match importGame ecPrelude "WrongInit" loopsExport with
+        | .error _ => true
+        | _ => false)
+
+-- A loop that opens its block is rejected: nothing precedes it.
+#guard (match importGame ecPrelude "LoopFirst" loopsExport with
+        | .error _ => true
+        | _ => false)
+
+-- A body whose last statement does not increment the counter is rejected.
+#guard (match importGame ecPrelude "NoIncr" loopsExport with
+        | .error _ => true
+        | _ => false)
+
+-- A body that writes the counter somewhere other than its last statement is
+-- rejected.
+#guard (match importGame ecPrelude "ExtraWrite" loopsExport with
+        | .error _ => true
+        | _ => false)
+
+-- A guard under `<=` is rejected: `i <= n` runs one iteration more than `i < n`,
+-- and the recognised guard is the strict one.
+#guard (match importGame ecPrelude "LeGuard" loopsExport with
+        | .error _ => true
+        | _ => false)
+
+-- A body containing an argument-free call is rejected: the call site names
+-- neither the procedure table nor the body, so the body's writes are not
+-- determined and the counter may be among them.
+#guard (match importGame ecPrelude "CallInBody" loopsExport with
+        | .error _ => true
         | _ => false)
 
 end Golden

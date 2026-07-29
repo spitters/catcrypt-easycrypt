@@ -65,6 +65,7 @@ table is an error.
 | `Fapp` of real `+`, `*` | `EcProb.add`, `.mul` |
 | `Fapp` of `\|·\|` to a difference | `EcProb.absDiff` |
 | `Fapp` of `from_int` to a non-negative `Fint` | `EcProb.const` |
+| `Fint` at the `int` code | `EcTerm.lit` |
 
 ## Nodes with no image
 
@@ -79,8 +80,11 @@ list `Form.lean` gives:
 * `Fglob` in value position, and as a formula on its own: a footprint-restricted
   memory is not a value of an `EcTy`, and a footprint is not a proposition. An
   equality of two `Fglob` reads is in the fragment, as a footprint comparison;
-* `Fint`, and any real term outside the probability fragment — in particular a
-  quotient, a signed negation, and a signed difference of two probabilities;
+* integer arithmetic in a term: an integer literal is an `EcTerm.lit` at the
+  `int` code, and `EcTerm` has no addition or comparison on integers, so an
+  applied integer operator is rejected by path;
+* any real term outside the probability fragment — in particular a quotient, a
+  signed negation, and a signed difference of two probabilities;
 * `Fpvar` of a `PVloc` other than `res`, the procedure-local read at a memory;
 * `Fquant` of a lambda, and an existential over a module type;
 * a module restriction that names individual procedures, or that lists what the
@@ -447,10 +451,7 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
   match getStr j "kind" with
   | .error e => .error e
   | .ok kind =>
-    if kind = "Fint" then
-      fail s!"integer term in {j.compress}: EcTy has no int code, so an integer \
-        term has no EcTerm image"
-    else if kind = "Fglob" then
+    if kind = "Fglob" then
       fail s!"'glob M' in value position in {j.compress}: a memory restricted to \
         a module's footprint is not a value of an EcTy"
     else if kind = "Fmatch" then
@@ -469,7 +470,19 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
       match checkNodeTy F.tables t j with
       | .error e => .error e
       | .ok () =>
-        if kind = "Flocal" then
+        if kind = "Fint" then
+          match t with
+          | .int =>
+            match getStr j "value" with
+            | .error e => .error e
+            | .ok s =>
+              match s.toInt? with
+              | none => fail s!"integer term '{s}' is not a decimal integer"
+              | some v => .ok (.lit v)
+          | _ =>
+            fail s!"integer term at type {repr t} in {j.compress}: an integer \
+              literal has an EcTerm image at the int code only"
+        else if kind = "Flocal" then
           match localNameOf F j with
           | .error e => .error e
           | .ok x => .ok (.var t x)
@@ -1531,7 +1544,9 @@ private def formsExport : Json :=
 
 /-- The tables the statements of that theory decode against. `Ideal` is the one
 module of the theory whose body is inside the accepted program fragment — `Enc`
-has an `int` global, `Game` is a functor and `Risky` raises — so it is the one
+applies the user-declared operator `enc`, whose path is in no dispatch table, and
+reads its own global in an expression, which the AST reaches only through
+`EcStmt.load`; `Game` is a functor and `Risky` raises — so it is the one
 procedure a judgement or a probability node can name. -/
 private def formsTables : Except String FormTables := do
   let e ← decodeEnvelope formsExport
@@ -1636,9 +1651,9 @@ private def formsStatement (name : String) : Except String EcForm := do
 
 Every Hoare judgement of `forms.ec` is a rejection, for a reason about the
 procedure rather than about the judgement: `Enc.main` takes a `bool` argument, so
-the argument EasyCrypt leaves implicit is not reconstructible, and `Enc` has an
-`int` global, so its body is outside the accepted program fragment and its
-signatures never reach the table. `hoare.expected.json`, the export of
+the argument EasyCrypt leaves implicit is not reconstructible, and its body is
+outside the accepted program fragment, so its signatures never reach the table.
+`hoare.expected.json`, the export of
 `tests/hoare.ec` in the exporter's tree, is the accepting counterpart: a module
 whose one global is a `bool` and whose two procedures take no argument. The checks
 below pin the `FhoareF` decoder and the `FbdHoareF` decoder at each of EasyCrypt's
@@ -1665,6 +1680,12 @@ def isGlobReadAt {t : EcTy} (e : EcTerm t) (nm : String) (i : Nat)
 def isBoolLit {t : EcTy} (e : EcTerm t) (v : Bool) : Bool :=
   match t, e.litValue with
   | .bool, some w => w == v
+  | _, _ => false
+
+/-- Whether a term is the `int` literal `v`. -/
+def isIntLit {t : EcTy} (e : EcTerm t) (v : Int) : Bool :=
+  match t, e.litValue with
+  | .int, some w => w == v
   | _, _ => false
 
 /-- The exporter's output for the Hoare-judgement theory, as text. -/
@@ -1740,6 +1761,50 @@ def hoareStatement (name : String) : Except String EcForm := do
         | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) .tru
                  (.and (.holds (.res .bool .cur)) (.eqT a b)) .ge _) =>
           isGlobReadAt a "Top.Coin./b" 0 (.side .cur) && isBoolLit b true
+        | _ => false)
+
+/-! ### An integer term in a probability event
+
+`ints.expected.json`, the export of `tests/ints.ec` in the exporter's tree, has a
+lemma whose event compares the integer result of a procedure with an integer
+literal. -/
+
+/-- The exporter's output for the integer theory, as text. -/
+def intsFormExportText : String := include_str "ints.expected.json"
+
+/-- The exporter's output for the integer theory. -/
+def intsFormExport : Json :=
+  match Json.parse intsFormExportText with
+  | .ok j => j
+  | .error _ => Json.null
+
+/-- The tables the statements of that theory decode against: the signature of
+`Counter.main`, whose result is an integer. -/
+def intsFormTables : Except String FormTables := do
+  let e ← decodeEnvelope intsFormExport
+  let it ← findItem e "Counter"
+  let S ← decodeStructure ecPrelude 0 it
+  .ok (formTables ecPrelude (procSigsOfStructure S))
+
+/-- Decode the statement of the lemma `name` from that theory. -/
+def intsFormStatement (name : String) : Except String EcForm := do
+  let F ← intsFormTables
+  importAxiom F name intsFormExport
+
+-- `Counter.main` is declared from unit to int.
+#guard (match intsFormTables with
+        | .ok F => F.procSigs == [("Top.Counter./main", ⟨.unit, .int⟩)]
+        | _ => false)
+
+-- `forall &m, Pr[Counter.main() @ &m : res = 0] <= 1%r` decodes to a memory
+-- quantifier over a comparison whose left side is the probability of an event
+-- equating the integer result with the integer literal `0`.
+#guard (match intsFormStatement "counter_bound" with
+        | .ok (.allMem "&m"
+                (.probCmp .le
+                  (.pr "Top.Counter./main" ⟨.unit, .int⟩ (.lit ()) (.named "&m")
+                     (.eqT (.res .int .cur) z))
+                  (.const _))) => isIntLit z 0
         | _ => false)
 
 /-- The tables with no procedure and no binder, for the nodes below, which no
@@ -1836,10 +1901,44 @@ private def jRealZero : Json :=
         | .error _ => true
         | _ => false)
 
--- An integer term is rejected.
+/-- The `int` type node. -/
+private def jFormInt : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Pervasive.int"), ("args", Json.arr #[])]
+
+-- An integer term decodes to a literal at the `int` code.
+#guard (match decodeTerm bareTables .int
+            (Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"),
+                         ("value", Json.str "3")]) with
+        | .ok e => isIntLit e 3
+        | _ => false)
+
+-- A negative integer term decodes at the same code.
+#guard (match decodeTerm bareTables .int
+            (Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"),
+                         ("value", Json.str "-3")]) with
+        | .ok e => isIntLit e (-3)
+        | _ => false)
+
+-- An integer term at another code is rejected, rather than coerced.
 #guard (match decodeTerm bareTables .bool
             (Json.mkObj [("ty", jFormBool), ("kind", Json.str "Fint"),
                          ("value", Json.str "3")]) with
+        | .error _ => true
+        | _ => false)
+
+-- Integer arithmetic in a term is rejected: `EcTerm` has no integer operator.
+#guard (match decodeTerm bareTables .int
+            (Json.mkObj
+              [("ty", jFormInt), ("kind", Json.str "Fapp"),
+               ("f", Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fop"),
+                                 ("path", Json.str "Top.CoreInt.add"),
+                                 ("targs", Json.arr #[])]),
+               ("args", Json.arr
+                 #[Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"),
+                               ("value", Json.str "1")],
+                   Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"),
+                               ("value", Json.str "2")]])]) with
         | .error _ => true
         | _ => false)
 
