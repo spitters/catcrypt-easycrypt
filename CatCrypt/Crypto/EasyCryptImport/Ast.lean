@@ -22,8 +22,10 @@ closed games.
 * **Expressions** (`EcExpr t`): intrinsically typed by an `EcTy` code —
   variables, literals, the boolean operators, decidable equality at any code,
   pair construction and projection, addition on `fin n`, integer addition and
-  comparison, and the finite-map operations. Expression evaluation is pure: it
-  reads a local valuation and returns a value.
+  comparison, the finite-map operations, the finite-set operations (singleton,
+  union, membership), the list operations (cons, `rcons`, `size`, `mem`,
+  `nth`), and the some-constructor. Expression evaluation is pure: it reads a
+  local valuation and returns a value.
 * **Distributions** (`EcDistr t`): intrinsically typed by the code they are a
   distribution over — the uniform distribution on a finite code, a point mass at
   an expression, a pushforward along an expression under a binder, a distribution
@@ -34,6 +36,8 @@ closed games.
   valuation an expression does.
 * **Statements** (`EcStmt`):
   - `assign t x e` — the local assignment `x <- e`;
+  - `assignTuple t xs e` — the destructuring assignment `(x₁, …, xₙ) <- e`,
+    binding each name to its component of the right-nested product;
   - `sample t x` — uniform sampling `x <$ t`, at a finite code;
   - `sampleD t x d` — sampling `x <$ d` from a distribution expression;
   - `load g x` — the global read `x <- M.g`;
@@ -48,14 +52,18 @@ closed games.
     under the qualified name `q` at signature `s`. This is the image of both a
     concrete module call `x <@ M.f(a)` and an abstract/adversary call
     `x <@ A.o(a)`; which one it is depends on what the resolution environment
-    binds to `q` (`Modules.lean`).
+    binds to `q` (`Modules.lean`). A call whose source discards the result
+    binds it to the anonymous local, which no source variable can name;
+  - `callProcTuple q s arg xs` — the call `(x₁, …, xₙ) <@ q(arg)`, whose
+    result destructures the way `assignTuple`'s value does.
 * **Globals** (`EcGlobal`): a module-scoped `var` with a stable location id and
   an `EcTy` code, at any code. It denotes a `GLocation`, the heap cell whose
   value type need only be countable and inhabited, which every `EcTy.interp` is.
   At a finite code the same cell is also a CatCrypt `Location`, `EcGlobal.finLoc`,
   and `EcGlobal.loc_finLoc` says the two views are the same cell.
-* **Procedures** (`EcProcAt s`): a formal parameter name, a statement body, and
-  a return expression, at a fixed signature `s`.
+* **Procedures** (`EcProcAt s`): the formal parameter names in declaration
+  order, a statement body, and a return expression, at a fixed signature `s`
+  whose argument type is the formals' types as a right-nested product.
 * **Interfaces** (`EcInterface`): the declared procedure names of a module type
   together with each name's signature.
 * **Modules** (`EcModule`): a name, a declared interface, the module's globals,
@@ -143,9 +151,16 @@ structure EcGlobal where
   id : Nat
   /-- The type code of the stored value. -/
   ty : EcTy
+  /-- The stored code is countable: a heap cell holds a countable value, and a
+  distribution's carrier is not one, so a module variable cannot live at a
+  `distr` code — the decoder rejects one rather than construct this proof. At
+  a closed code the default discharges the field. -/
+  hasEq : ty.hasEq = true := by rfl
 
 /-- The CatCrypt `GLocation` a global denotes. -/
-def EcGlobal.loc (g : EcGlobal) : GLocation := { id := g.id, ty := g.ty.interp }
+def EcGlobal.loc (g : EcGlobal) : GLocation :=
+  letI := countableOfHasEq g.ty g.hasEq
+  { id := g.id, ty := g.ty.interp }
 
 @[simp] theorem EcGlobal.loc_id (g : EcGlobal) : g.loc.id = g.id := rfl
 
@@ -195,6 +210,14 @@ inductive EcExpr : EcTy → Type where
   | finAdd {n : Nat} {pos : 0 < n} (a b : EcExpr (.fin n pos)) : EcExpr (.fin n pos)
   /-- Integer addition. -/
   | intAdd (a b : EcExpr .int) : EcExpr .int
+  /-- Integer multiplication. -/
+  | intMul (a b : EcExpr .int) : EcExpr .int
+  /-- Integer negation. -/
+  | intOpp (a : EcExpr .int) : EcExpr .int
+  /-- Euclidean division, EasyCrypt's `edivz`: the quotient and the remainder as
+  a pair, the remainder taken in `[0, |d|)`, and `(0, m)` at divisor zero. `%/`
+  and `%%` are its projections. -/
+  | intEdivz (a b : EcExpr .int) : EcExpr (.prod .int .int)
   /-- Integer order comparison. -/
   | intLe (a b : EcExpr .int) : EcExpr .bool
   /-- Bind a key in a finite map, shadowing any earlier binding. -/
@@ -205,6 +228,26 @@ inductive EcExpr : EcTy → Type where
   /-- The binding of a key in a finite map, or a default when it is unbound. -/
   | mapGetD {a b : EcTy} (m : EcExpr (.map a b)) (k : EcExpr a) (d : EcExpr b) :
       EcExpr b
+  /-- The present option value, EasyCrypt's `Some`. -/
+  | someE {a : EcTy} (x : EcExpr a) : EcExpr (.option a)
+  /-- List cons, EasyCrypt's `::`. -/
+  | listCons {a : EcTy} (x : EcExpr a) (l : EcExpr (.list a)) : EcExpr (.list a)
+  /-- Appending one element at the end of a list, EasyCrypt's `rcons`. -/
+  | listRcons {a : EcTy} (l : EcExpr (.list a)) (x : EcExpr a) : EcExpr (.list a)
+  /-- The length of a list as an integer, EasyCrypt's `size`. -/
+  | listSize {a : EcTy} (l : EcExpr (.list a)) : EcExpr .int
+  /-- Membership in a list, EasyCrypt's `mem`. -/
+  | listMem {a : EcTy} (l : EcExpr (.list a)) (x : EcExpr a) : EcExpr .bool
+  /-- The `i`-th element of a list, or the default `d` when the index is out of
+  range — EasyCrypt's `nth d l i`. -/
+  | listNth {a : EcTy} (d : EcExpr a) (l : EcExpr (.list a)) (i : EcExpr .int) :
+      EcExpr a
+  /-- The singleton finite set, EasyCrypt's `fset1`. -/
+  | fsetSingle {a : EcTy} (x : EcExpr a) : EcExpr (.fset a)
+  /-- The union of two finite sets, EasyCrypt's `` (`|`) ``. -/
+  | fsetUnion {a : EcTy} (s t : EcExpr (.fset a)) : EcExpr (.fset a)
+  /-- Membership in a finite set, EasyCrypt's `mem`. -/
+  | fsetMem {a : EcTy} (s : EcExpr (.fset a)) (x : EcExpr a) : EcExpr .bool
 
 /-- The value an expression is, when the expression is a literal. The type index
 is quantified, which is what lets a caller read the leaf out of an expression
@@ -275,6 +318,10 @@ inductive EcDistr : EcTy → Type where
   /-- `d` with the mass outside `fun x => p` sent to failure, EasyCrypt's
   `drestrict`. -/
   | restrict {t : EcTy} (d : EcDistr t) (x : EcVarId) (p : EcExpr .bool) : EcDistr t
+  /-- A distribution read out of an expression at a `distr` code — a formal
+  parameter or a local holding a first-class distribution value, which is how
+  an oracle samples from the distribution it was handed. -/
+  | ofExpr {t : EcTy} (e : EcExpr (.distr t)) : EcDistr t
 
 /-- The finiteness proof a distribution expression carries, when the expression is
 the uniform distribution on its carrier. The type index is quantified, which is
@@ -288,6 +335,14 @@ def EcDistr.uniformFin : {t : EcTy} → EcDistr t → Option (PLift (t.isFin = t
 inductive EcStmt where
   /-- Local assignment `x <- e`. -/
   | assign (t : EcTy) (x : String) (e : EcExpr t)
+  /-- Destructuring assignment `(x₁, …, xₙ) <- e`: `e` is typed at the
+  components' types as a right-nested product, and each name binds its
+  component in declaration order, exactly as a procedure's formals bind the
+  argument (`bindParams`, `Lower.lean`). The names are carried as a list,
+  mirroring `EcProcAt.params`; the rejected alternative — a fresh temporary
+  plus binary projections — would manufacture a binder the source does not
+  have and turn one instruction into a statement sequence. -/
+  | assignTuple (t : EcTy) (xs : List String) (e : EcExpr t)
   /-- Uniform sampling `x <$ t` at a finite code. The finiteness argument
   defaults to `rfl`, which discharges it for every closed finite code. -/
   | sample (t : EcTy) (x : String) (fin : t.isFin = true := by rfl)
@@ -306,6 +361,10 @@ inductive EcStmt where
   /-- The call `x <@ q(arg)` at signature `s`, resolved against the ambient
   procedure environment. -/
   | callProc (q : String) (s : EcSig) (arg : EcExpr s.arg) (x : String)
+  /-- The call `(x₁, …, xₙ) <@ q(arg)` at signature `s`, resolved against the
+  ambient procedure environment: the result destructures into the names the
+  way `EcStmt.assignTuple`'s value does. -/
+  | callProcTuple (q : String) (s : EcSig) (arg : EcExpr s.arg) (xs : List String)
 
 /-- The counter a statement initialises and the value it gives it, when the
 statement assigns an integer literal to a local variable. -/
@@ -330,6 +389,7 @@ game's table in the caller's own valuation, and the call site names neither the
 table nor the body, so its write set is not determined here. -/
 def EcStmt.assignedLocals : EcStmt → Option (List String)
   | .assign _ x _ => some [x]
+  | .assignTuple _ xs _ => some xs
   | .sample _ x _ => some [x]
   | .sampleD _ x _ => some [x]
   | .load _ x => some [x]
@@ -341,6 +401,7 @@ def EcStmt.assignedLocals : EcStmt → Option (List String)
   | .forN _ body => EcStmt.assignedLocalsList body
   | .call _ => none
   | .callProc _ _ _ x => some [x]
+  | .callProcTuple _ _ _ xs => some xs
 
 /-- The local variables a statement block can write, or `none` when one of its
 statements does not determine them. -/
@@ -360,11 +421,16 @@ def EcStmt.avoids (x : String) (body : List EcStmt) : Bool :=
   | some ws => !ws.contains x
   | none => false
 
-/-- A procedure body at a fixed signature: the formal parameter name, the
-statement body, and the return expression. -/
+/-- A procedure body at a fixed signature: the formal parameter names in
+declaration order, the statement body, and the return expression. The
+signature's argument type is the formals' types as a right-nested product —
+`unit` for no formals, the formal's own type for one — and a call site passes
+its arguments in the same nesting, so the `k`-th formal binds the `k`-th
+component at call entry (`bindParams`, `Lower.lean`). -/
 structure EcProcAt (s : EcSig) where
-  /-- The formal parameter, bound as a local variable. -/
-  param : String
+  /-- The formal parameters in declaration order, each bound as a local
+  variable. -/
+  params : List String
   /-- The statement body. -/
   body : List EcStmt
   /-- The return expression. -/

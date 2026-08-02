@@ -14,8 +14,8 @@ import CatCryptCore.Prob.XorBij
 
 This module carries one EasyCrypt-style game that uses **both** a bounded loop and
 a **procedure call** through the importer end to end: it encodes a `q`-round
-one-time-pad accumulator as an `EcGame` whose `main` runs a `for` loop that calls
-a `step` procedure `q` times, lowers it to `SPComp Bool`, and proves perfect
+one-time-pad accumulator as an `EcGame` whose `main` calls a `step` procedure `q`
+times in a bounded loop, lowers it to `SPComp Bool`, and proves perfect
 indistinguishability of the two message variants — first as a pRHL judgment, then
 lifted to zero distinguishing advantage.
 
@@ -29,12 +29,24 @@ module QFoldOTP(m : bool) = {
     acc <- acc ^ k ^ m;
   }
   proc main() : bool = {
+    var i : int;
     acc <- false;
-    for i = 0 to q-1 { step(); }
+    i <- 0;
+    while (i < q) {
+      step();
+      i <- i + 1;
+    }
     return acc;
   }
 }
 ```
+EasyCrypt writes bounded loops as `while`: a counter given its initial value by
+the statement before the loop, a guard `i < q`, and a body whose last statement
+increments the counter and which writes it nowhere else. The decoder recognises
+this idiom when the bound is an integer literal and decodes it to the `forN`
+loop form, which carries the iteration count and no counter; here `q` stands for
+that literal, matching the Lean game's parameter `q : Nat`.
+
 Each round masks the accumulator with a fresh uniform bit, so after any number of
 rounds `acc` is uniform independently of `m`; the two variants are therefore pRHL
 equal and indistinguishable.
@@ -119,7 +131,6 @@ theorem lowerGame_qfold (m : Bool) (q : Nat) :
   simp only [lowerClosedGame, lowerGame, qfoldGame, lowerStmts_assign, lowerStmts_forN,
     lowerStmts_nil, evalExpr, SPComp.bind_pure, accEnv]
   rw [hfn]
-  rfl
 
 /-- The loop invariant coupling the two runs: the accumulators agree and the heaps
 agree. -/

@@ -118,14 +118,14 @@ def otpModule : EcModule where
   procs := fun p =>
     match p with
     | "gen" =>
-        { param := anonymousLocal
+        { params := [anonymousLocal]
           body := [.sample .bool "kk", .store kGlobal (.var .bool "kk")]
           ret := .var .bool "kk" }
     | "wipe" =>
-        { param := anonymousLocal
+        { params := [anonymousLocal]
           body := [.store kGlobal (.lit false)]
           ret := .lit false }
-    | _ => { param := anonymousLocal, body := [], ret := .lit default }
+    | _ => { params := [anonymousLocal], body := [], ret := .lit default }
 
 /-- `Otp`'s memory footprint — the image of EasyCrypt's `glob Otp`. -/
 def otpLocs : LocSet := globLocs otpModule.globals
@@ -157,12 +157,12 @@ private def isNotOfVar {t : EcTy} (e : EcExpr t) (x : String) : Bool :=
                 | [{ name := "Top.Otp./k", id := 0, ty := .bool }] => true
                 | _ => false)
             && (match M.procs "gen" with
-                | { param := "_", body := [.sample .bool "kk", .store g e], ret := _ } =>
+                | { params := ["_"], body := [.sample .bool "kk", .store g e], ret := _ } =>
                   g.name == "Top.Otp./k" && g.id == 0 && g.ty == .bool
                     && e.varName == some "kk"
                 | _ => false)
             && (match M.procs "wipe" with
-                | { param := "_", body := [.store g e], ret := _ } =>
+                | { params := ["_"], body := [.store g e], ret := _ } =>
                   g.name == "Top.Otp./k" && isBoolLitExpr e false
                 | _ => false)
         | _ => false)
@@ -221,7 +221,7 @@ def negModule : EcModule where
   interface := advInterface
   globals := []
   procs := fun _ =>
-    { param := "c"
+    { params := ["c"]
       body := [.callProc (xqualify "P" "guess") ⟨.bool, .bool⟩ (.var .bool "c") "b"]
       ret := .bnot (.var .bool "b") }
 
@@ -244,7 +244,7 @@ def expModule : EcModule where
   interface := expInterface
   globals := []
   procs := fun _ =>
-    { param := anonymousLocal
+    { params := [anonymousLocal]
       body :=
         [ .callProc (xqualify "Top.Otp" "gen") ⟨.unit, .bool⟩ (.lit ()) "kk",
           .callProc (xqualify "Q" "guess") ⟨.bool, .bool⟩ (.var .bool "kk") "b",
@@ -269,7 +269,7 @@ def expFunctor : EcFunctor where
             && F.body.interface.names == ["guess"]
             && F.body.globals.isEmpty
             && (match F.body.procs "guess" with
-                | { param := "c", body := [.callProc q s a "b"], ret := r } =>
+                | { params := ["c"], body := [.callProc q s a "b"], ret := r } =>
                   q == "P./guess" && s == { arg := .bool, res := .bool }
                     && a.varName == some "c" && isNotOfVar r "b"
                 | _ => false)
@@ -285,7 +285,7 @@ def expFunctor : EcFunctor where
             && F.body.interface.sig "main" == { arg := .unit, res := .bool }
             && F.body.globals.isEmpty
             && (match F.body.procs "main" with
-                | { param := "_",
+                | { params := ["_"],
                     body := [.callProc q₁ s₁ _ "kk", .callProc q₂ s₂ a₂ "b",
                              .callProc q₃ s₃ _ "z"], ret := r } =>
                   q₁ == "Top.Otp./gen" && s₁ == { arg := .unit, res := .bool }
@@ -425,17 +425,16 @@ def importedStatement (name : String) : Except String EcForm := do
 def expNegLlForm : EcForm :=
   .allModRestr "A" advInterface [kGlobal]
     (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
-      (.bdHoare expNegPath expMainSig (.lit (t := .unit) ()) .tru .tru .eq 1))
+      (.bdHoare expNegPath expMainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))
 
 -- The decoder produces that form: `islossless` over the abstract module's
 -- procedure is the dedicated node, and over the functor image it is the bounded
--- Hoare judgement at the trivial event. The bound is left open in the pattern
--- because `ℝ≥0∞` has no computable equality.
+-- Hoare judgement at the trivial event and the bound `1`.
 #guard (match importedStatement "exp_neg_ll" with
         | .ok (.allModRestr "A" I [g]
                 (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                   (.bdHoare "Top.Exp(Top.Neg(A))./main" ⟨.unit, .bool⟩ (.lit ())
-                    .tru .tru .eq _))) =>
+                    .tru .tru EcCmp.eq (EcRealLit.mk 1)))) =>
           I.names == ["guess"] && I.sig "guess" == { arg := .bool, res := .bool }
             && g.name == "Top.Otp./k" && g.id == 0 && g.ty == .bool
         | _ => false)
@@ -463,14 +462,14 @@ theorem expNegLlGoal_eq :
     expNegLlGoal
       = ∀ A : ModuleImpl advInterface, ModuleRespectsLocs otpLocs A →
           ProcLossless (A.proc "guess") →
-          ∀ h : Heap, True → prEventComp (expNegImpl A) h (fun _ _ => True) = 1 :=
+          ∀ h : Heap, True → prEventComp (expNegImpl A) h (fun _ _ => True) = (1 : ℕ) :=
   rfl
 
 /-- **The imported statement, closed.** -/
 theorem expNegLlGoal_holds : expNegLlGoal := by
   rw [expNegLlGoal_eq]
   intro A _ hA h _
-  rw [prEventComp_true]
+  rw [Nat.cast_one, prEventComp_true]
   exact expNegImpl_lossless A hA h
 
 end CatCrypt.Crypto.EasyCryptImport.FunctorImport

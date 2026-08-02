@@ -1,11 +1,8 @@
 # `EasyCryptImport/` — Agent notes
 
-Maintenance notes for the EasyCrypt importer: the anti-patterns, the gotchas,
-the fixture mechanics, the regeneration commands, the invariants, and the open
-work. Reference material for anyone modifying the package; not needed to use it.
-
-What the importer is, what it accepts and what it rests on are the repository
-root `README.md` and `docs/{FRAGMENT,TRUST,DESIGN}.md`.
+Editing notes for the EasyCrypt importer. `README.md` in this directory describes
+what the importer is and how to run it; this file carries the anti-patterns, the
+gotchas, the invariants, and the open work.
 
 ## Anti-patterns
 
@@ -23,8 +20,8 @@ root `README.md` and `docs/{FRAGMENT,TRUST,DESIGN}.md`.
   evidence.
 - **DO NOT hand-edit a file under `Examples/` whose header says it is
   generated.** `EmitCheck.lean` compares the committed text with the emitter's
-  output; regenerate it with `EmitMain.lean` instead, with the commands under
-  "Regenerating the committed literals" below.
+  output; regenerate it with `EmitMain.lean` instead. The regeneration commands
+  are in `EmitMain.lean`'s docstring.
 - **DO NOT patch EasyCrypt to make the exporter work.** The exporter links
   `easycrypt.ecLib` out of tree. A patched EasyCrypt would make the trust base
   a fork rather than a release.
@@ -66,42 +63,15 @@ exist twice: in the exporter's
 copy stays invisible to the golden `#guard`s, which keep passing against the old
 bytes.
 
-`bash scripts/ec-fixture-sync.sh` is what makes that drift loud. It checks four
-things, each failing on its own: every mirrored golden is byte-equal to the
-exporter's, traces to an `.ec` source beside that golden, and is read by an
-`include_str` here; and every `*.json` under this directory is either such a
-mirror or a declared Lean-side-only input. It reads `../ec-export` (override
-with `EC_EXPORT_DIR`) and reports a skip, exit 0, when the exporter is not
-checked out. Nothing runs it automatically.
+`bash scripts/ec-fixture-sync.sh` is what makes that drift loud. It checks three
+things: every mirrored golden is byte-equal to the exporter's, traces to an `.ec`
+source beside that golden, and is read by an `include_str` here. It reads
+`../ec-export` (override with `EC_EXPORT_DIR`) and reports a skip when the
+exporter is not checked out. It is not wired into CI.
 
 The exporter's other two fixtures (`globals.expected.json`,
 `unsupported.expected.json`) exercise the export side only and have no copy here;
 the script reports them as export-side-only rather than failing.
-
-### Regenerating the committed literals
-
-`Examples/OTPGenerated.lean`, `Examples/OTPArgGenerated.lean` and
-`Examples/NegGenerated.lean` are the emitter's output, and `EmitCheck.lean`
-compares each against what the emitter prints now. A change to `Emit.lean` — to
-`emitExpr`'s named arguments above all — changes all three, so regenerate them
-in the same change:
-
-```
-lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
-  CatCrypt/Crypto/EasyCryptImport/otp.expected.json game OTP0 otp0Game \
-  CatCrypt/Crypto/EasyCryptImport/Examples/OTPGenerated.lean
-lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
-  CatCrypt/Crypto/EasyCryptImport/otp.expected.json module OTPArg otpArgModule \
-  CatCrypt/Crypto/EasyCryptImport/Examples/OTPArgGenerated.lean
-lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
-  CatCrypt/Crypto/EasyCryptImport/functor.expected.json functor Neg negFunctor \
-  CatCrypt/Crypto/EasyCryptImport/Examples/NegGenerated.lean
-```
-
-A module also declares `<decl-name>Procs`, and a functor declares
-`<decl-name>Body` and `<decl-name>BodyProcs`. `EmitMain.lean`'s docstring
-carries the same commands and the dispatch tables the command line decodes
-against.
 
 ### An EasyCrypt upgrade invalidates the fixtures
 
@@ -113,23 +83,38 @@ verbatim in the goldens. **After an EasyCrypt upgrade, regenerate the fixtures
 (both copies) and rebuild the Lean guards.** A stamp shift fails the statement
 goldens, whose binder resolution reads stamps.
 
-### The import manifest is the only importer
+### The rot guard is the only importer
 
-The example modules have no importer of their own, so
-`CatCrypt.Crypto.EasyCryptImport.All` is what keeps them from rotting when the
-AST, the lowering, the emitter or the CatCrypt core they target changes. Add
-every new module of this directory to `All.lean`. Building `All.lean` is also
-what runs every golden `#guard`; `All.lean`'s docstring lists the modules that
-carry them. This repository has no CI, so that build and
-`scripts/ec-fixture-sync.sh` are run by hand.
+Nothing in `CatCrypt.Crypto` imports this directory. The example modules have no
+importer of their own, so `CatCrypt.Crypto.EasyCryptImport.All` is what keeps
+them from rotting when the AST, the lowering, the emitter or the CatCrypt core
+they target changes. That target is in the CI rot-guard list
+(`.github/workflows/ci.yml`); keep it there, and add any new module of this
+directory to `All.lean`. Building `All.lean` is also what runs every golden
+`#guard`; `All.lean`'s docstring lists the modules that carry them.
 
-### The LSP drops on `FormJson.lean` and `FormToProp.lean`
+### The LSP on `FormJson.lean` and `FormToProp.lean`, and what a blank answer means
 
 Interactive proof-state queries against these two kill the Lean LSP backend —
-`lean_goal` on `FormToProp.lean` closes the connection. Diagnostics are usually
-served from cache and look fine, which makes the failure look intermittent; it is
-the elaboration a goal query forces that does not fit. Verify changes to these
-two with `lake build` of the module, and do not retry a dropped call.
+`lean_goal` on `FormToProp.lean` closes the connection. It is the elaboration a
+goal query forces that does not fit; do not retry a dropped call.
+
+**Diagnostics are a different matter, and a blank answer has two causes.**
+Against a freshly built tree, `lean_diagnostic_messages` on both files answers
+normally and runs their `#guard`s. What looks like a drop —
+`success: false` with an empty `items` and an empty `failed_dependencies` — is
+the signature of a module whose *imports* are out of date, which is the state
+every file downstream of an edited one is in until the next build. So a blank
+answer says "rebuild the import", not "this file cannot be checked", and the two
+are told apart by whether anything the file imports has been edited.
+
+The consequence for an editing order: a file whose imports are untouched can be
+verified through the LSP even while its siblings are dirty, so edit leaves-last
+— `Ty.lean`, then `Ast.lean`/`Params.lean`, then `Form.lean`/`Json.lean`, then
+`FormToProp.lean`/`FormJson.lean` — and check each one before moving down. What
+is left unverifiable that way is checked against a scratch module that *copies*
+the new declarations instead of importing them, since its own imports are then
+clean.
 
 `FormJson.lean` and `Json.lean` are the two largest files here. Prefer adding a
 decoder arm over restructuring the dispatch chain: it is a `String`-keyed
@@ -248,17 +233,22 @@ is reached from hand-written `EcForm` literals, which is how
 programs needs whole-heap equality on both sides, and that shape has no exporter
 source.
 
-The consequence matters when comparing an imported judgement against a
-hand-written one. An imported `equiv` over global-free games carries the
-precondition `true` and the postcondition "results equal", while the hand-written
-coupling in `Examples/OTPImport.lean` assumes equal initial memories and concludes
-equal results *and* equal final memories. The two are **incomparable** — the
-imported one is weaker on both sides — so neither is an instance of the other.
-`Examples/OTPEquivImport.lean` documents this and resolves it by proving one
-coupling with the precondition left as a parameter; both statements follow from
-that, the hand-written one definitionally and the imported one by weakening the
-postcondition. Reach for that shape rather than restating a coupling per
-precondition.
+The precondition an imported judgement carries is not the one a hand-written
+coupling assumes, and the two do not order. EasyCrypt has no whole-memory term:
+`={glob M}` is typechecker-expanded into one equality per declared `var` of `M`,
+so for a global-free module it degenerates to `true`. An imported `equiv` over
+global-free games therefore carries the precondition `true` and a results-only
+postcondition, while a hand-written CatCrypt coupling assumes `eqPre` and
+concludes `eqPost` — results **and** final heaps equal. The two are
+**incomparable**: the imported one applies to more initial pairs and concludes
+less, so neither is an instance of the other.
+
+State the coupling at a parametric precondition and both fall out.
+`CatCryptCore.Relational.Frame.r_frame_of_preservesNothing` frames **any**
+precondition across computations that modify nothing, which a global-free game
+is; `Examples/OTPEquivImport.lean` is the worked instance. `r_frame_local` is not
+the lemma to reach for: it wants `DependsOn Frame L` with `L : LocSet =
+Finset Nat`, and `eqPre` has no finite footprint.
 
 ## A global read is not matchable in a `#guard`; read it back instead
 
@@ -334,6 +324,81 @@ modules is the rejected alternative: the tuple is a nested product to build and
 destructure at every call site, it has no partial application, and it makes the
 one-parameter case a different function from the existing one.
 
+## An abstract operator is a parameter; a finiteness assertion is not a hypothesis
+
+A theory-level `op f : T.` without a definition (`Th_operator` with body kind
+`Abstract`) registers in `DecodeTables.absOpPaths` at the signature its type gives
+it, a read of it decodes to `EcTerm.opApp`, and `EcForm.allOp` quantifies the
+statement over the realization. The realization environment is `OpEnv`
+(`Params.lean`): `ProcEnv` with the monad deleted, so arity rides on `EcSig`'s
+right-nested product and nullary constants, abstract predicates (`s.res = bool`)
+and abstract distributions (`s.res = distr t`) are one mechanism. Adding a shape
+means extending `decodeThOperatorAbstract`, not adding an AST node.
+
+Two rules on it:
+
+- **`OpEnv` is total, so the binders are what keep a statement away from the
+  default.** An unbound path answers with the canonical inhabitant of its result
+  code, which is not the operator's meaning. `EcForm.opsOf` collects the operators
+  a statement reads without binding, `EcForm.assembleParams` binds exactly those,
+  and a `#guard` per statement checks `opsOf` of the assembled form is empty. Do
+  not emit a statement without that check.
+- **Do not import `Top.Finite.finite_type` or a `card` axiom as a `Finite` /
+  `Fintype` / `Nonempty` hypothesis on a fixed-carrier opaque code.** At the `Int`
+  carrier such a claim is refutable, so a theory carrying it has an unsatisfiable
+  hypothesis set and every imported statement of that theory holds vacuously —
+  the shape that made nine `SurfaceDeps` `*_extracted_uc` theorems assert nothing.
+  A finiteness assertion stays a decode rejection while the carrier is fixed; the
+  route that makes it a theorem rather than an assumption is a cardinality
+  parameter (`EcTy.fin n` at a variable `n`), which also gives `card = n` by
+  `Fintype.card_fin`.
+
+An imported `axiom` and an imported `lemma` are different roles, and
+`decl.axiom_kind` is the discriminator: an `Axiom` item is a hypothesis the
+theory's statements are proved under, so its image is a proposition at a supplied
+realization (`importedPropWithOps`), while a `Lemma` item is a goal, whose image
+closes over its operators (`importedProp` of the assembled form). Closing an
+`Axiom` item over its operators states something the theory does not:
+`Examples/PRFParamImport.lean` carries both readings of one item and the proof
+that the closed one is refutable. A theory whose imported hypotheses are exhibited
+at one realization — that module's `PRFData.pointMassLaws` — is a theory whose
+statements are not vacuous; a theory without such a witness has no such assurance.
+
+## A subtype's inhabitation is a proof, never an instance you postulate
+
+`subtype t = {x : c | P x}` exports as a `Th_type` whose `decl.subtype` carries the
+carrier, the predicate, and (schema 8) `nonempty`, a `{path, axiom_kind}` reference
+to the `exists x, P x` obligation the declaration's `Top.Subtype` clone left in the
+environment. There is no witness in the export and there cannot be one: EasyCrypt
+keeps the obligation's statement and discards its proof.
+
+Three rules follow, and each is enforced by a decoder or a code shape.
+
+- **Never postulate `Inhabited` or `Nonempty` for a decoded type.** At an empty
+  subtype such an instance proves `False`, and every theorem of the file is then
+  worthless. `interpInhabited` stays total and constructive: `EcTy.intRange lo hi`
+  carries `lo < hi` and its inhabitant is `⟨lo, _⟩`, so a code that cannot be built
+  cannot enter `EcTy` in the first place.
+- **A declaration whose `nonempty` does not resolve is a decode rejection.**
+  `decodeThTypeSubtype` checks the reference before it looks at the predicate, and
+  its message names what assuming inhabitation would cost. 16 of the corpus's 30
+  integer-carrier declarations are in this class (a clone-copied `tydecl` whose own
+  namespace holds no obligation); they stay rejected.
+- **The code is a function of the theory's parameters.** Every corpus predicate
+  bounds its carrier by a *declared operator* (`{x : int | 0 <= x < p}` for
+  `op p : int.`), so no closed `EcTy` denotes the subtype and the decoder produces
+  the declaration — carrier, range, obligation path — rather than a code. The code
+  is supplied at the instantiation with `DecodeTables.withSubtype`, and its `lo <
+  hi` is discharged from the theory's imported hypotheses (`axiom ge2_p : 2 <= p.`)
+  by `omega`. `Examples/ZModPSubtypeImport.lean` is the worked case. Do not add a
+  branch that registers the bare carrier under the subtype's name: a statement at
+  the carrier is a statement about a different type.
+
+`axiom_kind: "Lemma"` on the reference does not say the obligation was discharged —
+the exporter runs with proof checking off, and an `admit` is indistinguishable from
+a proof — so the reference locates the statement and the Lean proof is the
+evidence.
+
 ## Widening the distribution fragment
 
 `EcDistr` covers the uniform distribution, `dunit`, `dmap`, `dcond`, `dlet`,
@@ -364,13 +429,6 @@ because it names a distribution no EasyCrypt game samples from.
 
 ## Open work
 
-- **A `bd_hoare` bound is not pinned by its golden `#guard`.** `ℝ≥0∞` has no
-  computable equality, so the three `FbdHoareF` guards over
-  `hoare.expected.json` match the bound with a wildcard and pin the shape of the
-  statement and the comparison only. The `otp_pr_diff` guard has the same hole.
-  A change that made `decodeRealLit` return the wrong constant would pass every
-  guard. Closing this needs a decidable comparison on the decoded bound, or a
-  decoder that returns the numerator and denominator it read.
 - **`EcForm.memEq` is unreachable from any decoder.** See the section above; it
   is exercised only from hand-written literals. `EcForm.memEqOn`, the footprint
   comparison against declared globals, is in the same position: `Fglob` names a
@@ -395,10 +453,9 @@ because it names a distribution no EasyCrypt game samples from.
   environment, which is where the image's procedures are bound. With a decoded
   functor that extension is the functor applied to `ProcEnv.moduleX` at the
   binder's name, rather than a hand-written game.
-- **Neither repository has CI.** The exporter's `dune runtest` and this
-  repository's `lake build …All` and `scripts/ec-fixture-sync.sh` are run by
-  hand, so an exporter change is caught here only when somebody runs one of
-  them.
+- **The exporter repository has no CI.** Its golden tests are run by hand, and
+  `scripts/ec-fixture-sync.sh` is not wired into this repository's CI either, so
+  a change there is caught here only when somebody runs one of the two.
 - **Complexity and cost annotations have no target.** There is no `SPComp`-level
   query counter or running time, so an imported concrete-security statement that
   depends on `q_H` or on a running time loses that dependence. This is a gap in
@@ -406,11 +463,10 @@ because it names a distribution no EasyCrypt game samples from.
 
 ## Cross-references
 
-- The accepted fragment and the rejected constructs: `docs/FRAGMENT.md`.
-- What is unverified and what bounds it: `docs/TRUST.md`.
-- The pipeline, the module map and the repository layout: `docs/DESIGN.md`.
-- The worked examples and the commands: `README.md` in this directory.
-- Exporter coverage and its unsupported-node list: `../ec-export/docs/COVERAGE.md`;
-  its fixtures and golden regeneration: `../ec-export/AGENTS.md`.
+- Fragment, pipeline, commands, trust boundary: `README.md` in this directory.
+- Exporter coverage, its unsupported-node list, and its golden regeneration:
+  `../ec-export/README.md`.
 - The pRHL and pHL rules an imported goal is closed with:
   `CatCryptCore.Relational.Rules`, `CatCryptCore.Unary.Rules`.
+- The tactic surface available for closing imported goals:
+  `CatCrypt/Tactics/AGENTS.md`.

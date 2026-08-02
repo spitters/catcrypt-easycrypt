@@ -14,7 +14,7 @@ editing it.
 
 * source: `tests/functor.ec`
 * source_digest: `38fe427f5f4d6e55efc2bd6a03dd2cd8`
-* schema: `catcrypt-ec-export` version 5
+* schema: `catcrypt-ec-export` version 10
 * EasyCrypt build: `n/a`
 * theory root: `Top`
 
@@ -33,7 +33,7 @@ def negFunctorBodyProcs : List (String × SigProc) :=
   [
     ("guess",
       { sig := (EcSig.mk EcTy.bool EcTy.bool)
-        proc := EcProcAt.mk "c"
+        proc := EcProcAt.mk ["c"]
           [ (EcStmt.callProc "P./guess" (EcSig.mk EcTy.bool EcTy.bool) (EcExpr.var EcTy.bool "c") "b") ]
           (EcExpr.bnot (EcExpr.var EcTy.bool "b")) })
   ]

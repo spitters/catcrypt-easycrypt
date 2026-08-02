@@ -1,6 +1,6 @@
 {
   "schema": "catcrypt-ec-export",
-  "version": 5,
+  "version": 10,
   "ec_hash": "n/a",
   "ec_theories_digest": "40ff0c9cc684cb44a744c6da76d75878",
   "ec_theories_files": 128,
@@ -1096,14 +1096,10 @@
                 }
               ]
             }
-          }
+          },
+          "nonempty": { "path": "Top.inhabited", "axiom_kind": "Lemma" }
         }
       }
-    },
-    {
-      "kind": "Unsupported",
-      "what": "global: Grealize",
-      "pp": "realize inhabited."
     },
     {
       "kind": "Th_axiom",
@@ -4239,6 +4235,7 @@
     }
   ],
   "skipped_not_declarations": {
+    "Grealize": 1,
     "Gsave": 18,
     "Gtactics": 36,
     "GthRequire": 1

@@ -126,14 +126,14 @@ def otpModule : EcModule where
   procs := fun p =>
     match p with
     | "gen" =>
-        { param := anonymousLocal
+        { params := [anonymousLocal]
           body := [.sample .bool "kk", .store kGlobal (.var .bool "kk")]
           ret := .var .bool "kk" }
     | "wipe" =>
-        { param := anonymousLocal
+        { params := [anonymousLocal]
           body := [.store kGlobal (.lit false)]
           ret := .lit false }
-    | _ => { param := anonymousLocal, body := [], ret := .lit default }
+    | _ => { params := [anonymousLocal], body := [], ret := .lit default }
 
 /-- `Otp`'s memory footprint — the image of EasyCrypt's `glob Otp`. -/
 def otpLocs : LocSet := globLocs otpModule.globals
@@ -168,12 +168,12 @@ private def isBoolLitExpr {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
 #guard (match importModule ecPrelude "Otp" restrExport with
         | .ok M =>
           (match M.procs "gen" with
-           | { param := "_", body := [.sample .bool "kk", .store g e], ret := _ } =>
+           | { params := ["_"], body := [.sample .bool "kk", .store g e], ret := _ } =>
              g.name == "Top.Otp./k" && g.id == 0 && g.ty == .bool
                && e.varName == some "kk"
            | _ => false)
             && (match M.procs "wipe" with
-                | { param := "_", body := [.store g e], ret := _ } =>
+                | { params := ["_"], body := [.store g e], ret := _ } =>
                   g.name == "Top.Otp./k" && g.id == 0 && g.ty == .bool
                     && isBoolLitExpr e false
                 | _ => false)
@@ -366,17 +366,16 @@ theorem expPrEqGoal_eq :
 def expLosslessForm : EcForm :=
   .allModRestr "A" advInterface [kGlobal]
     (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
-      (.bdHoare "Top.Exp0(A)./main" mainSig (.lit (t := .unit) ()) .tru .tru .eq 1))
+      (.bdHoare "Top.Exp0(A)./main" mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))
 
 -- The decoder produces that form: `islossless` over the abstract module's
 -- procedure is the dedicated node, and over the functor image it is the bounded
--- Hoare judgement at the trivial event. The bound is left open in the pattern
--- because `ℝ≥0∞` has no computable equality.
+-- Hoare judgement at the trivial event and the bound `1`.
 #guard (match importedStatement "exp_ll" with
         | .ok (.allModRestr "A" _ [_]
                 (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                   (.bdHoare "Top.Exp0(A)./main" ⟨.unit, .bool⟩ (.lit ())
-                    .tru .tru .eq _))) => true
+                    .tru .tru EcCmp.eq (EcRealLit.mk 1)))) => true
         | _ => false)
 
 /-- The imported statement of `exp_ll`, as a goal. -/
@@ -390,7 +389,8 @@ theorem expLosslessGoal_eq :
     expLosslessGoal
       = ∀ A : ModuleImpl advInterface, ModuleRespectsLocs otpLocs A →
           ProcLossless (A.proc "guess") →
-          ∀ h : Heap, True → prEventComp (expImpl A false) h (fun _ _ => True) = 1 :=
+          ∀ h : Heap, True →
+            prEventComp (expImpl A false) h (fun _ _ => True) = (1 : ℕ) :=
   rfl
 
 /-! ## The proofs -/
@@ -435,7 +435,7 @@ the experiment lossless. -/
 theorem expLosslessGoal_holds : expLosslessGoal := by
   rw [expLosslessGoal_eq]
   intro A _ hA h _
-  rw [prEventComp_true, expImpl_eq]
+  rw [Nat.cast_one, prEventComp_true, expImpl_eq]
   refine lossless_bind (lossless_sample (α := Bool)) (fun k => ?_) h
   refine lossless_bind (lossless_set kLoc k) (fun _ => ?_)
   refine lossless_bind (hA _) (fun b => ?_)

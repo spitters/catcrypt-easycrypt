@@ -139,7 +139,6 @@ theorem lowerClosedGame_exceptedGame (k : EcVarId) :
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env)) = SPComp.pure true
   rw [lowerStmts_exceptedBody, SPComp.pure_bind]
   simp only [evalExpr, Env.read_update_same]
-  rfl
 
 /-- The lowered point-mass game is the constant `true`. -/
 theorem lowerClosedGame_pointGame :
@@ -150,7 +149,6 @@ theorem lowerClosedGame_pointGame :
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env)) = SPComp.pure true
   rw [lowerStmts_pointBody, SPComp.pure_bind]
   simp only [evalExpr, Env.read_update_same]
-  rfl
 
 /-- The two imported games lower to one `SPComp Bool`: importing the `dexcepted`
 distribution and importing the point mass it equals give the same program. -/

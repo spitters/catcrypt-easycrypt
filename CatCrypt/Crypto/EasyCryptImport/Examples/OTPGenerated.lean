@@ -14,7 +14,7 @@ editing it.
 
 * source: `tests/otp.ec`
 * source_digest: `e73f3b1113795b06a4132a39950a0a3d`
-* schema: `catcrypt-ec-export` version 5
+* schema: `catcrypt-ec-export` version 10
 * EasyCrypt build: `n/a`
 * theory root: `Top`
 

@@ -7,6 +7,7 @@ import CatCrypt.Crypto.EasyCryptImport.Ty
 import CatCrypt.Crypto.EasyCryptImport.Ast
 import CatCrypt.Crypto.EasyCryptImport.Json
 import CatCrypt.Crypto.EasyCryptImport.Modules
+import CatCrypt.Crypto.EasyCryptImport.Params
 import CatCrypt.Crypto.EasyCryptImport.Lower
 import CatCrypt.Crypto.EasyCryptImport.FunctorN
 import CatCrypt.Crypto.EasyCryptImport.Restrictions
@@ -14,6 +15,7 @@ import CatCrypt.Crypto.EasyCryptImport.Form
 import CatCrypt.Crypto.EasyCryptImport.FormJson
 import CatCrypt.Crypto.EasyCryptImport.FormToProp
 import CatCrypt.Crypto.EasyCryptImport.Emit
+import CatCrypt.Crypto.EasyCryptImport.EmitForm
 import CatCrypt.Crypto.EasyCryptImport.EmitMain
 import CatCrypt.Crypto.EasyCryptImport.EmitCheck
 import CatCrypt.Crypto.EasyCryptImport.Examples.OTPImport
@@ -30,6 +32,13 @@ import CatCrypt.Crypto.EasyCryptImport.Examples.Functor2Import
 import CatCrypt.Crypto.EasyCryptImport.Examples.RandomOracleImport
 import CatCrypt.Crypto.EasyCryptImport.Examples.NonUniformImport
 import CatCrypt.Crypto.EasyCryptImport.Examples.DistrBindImport
+import CatCrypt.Crypto.EasyCryptImport.Examples.PRFParamImport
+import CatCrypt.Crypto.EasyCryptImport.Examples.UUFKOAPremiseImport
+import CatCrypt.Crypto.EasyCryptImport.Examples.AEADParamImport
+import CatCrypt.Crypto.EasyCryptImport.Examples.ZModPSubtypeImport
+import CatCrypt.Crypto.EasyCryptImport.Examples.CorePairSurjImport
+import CatCrypt.Crypto.EasyCryptImport.Instances
+import CatCrypt.Crypto.EasyCryptImport.Examples.StdRingInstanceImport
 
 /-!
 # EasyCrypt importer: import manifest
@@ -38,7 +47,10 @@ This module forces every module of the EasyCrypt importer, including the worked
 examples, the emitter, and the generated files. The examples have no importer of
 their own, so building this module is what keeps them from rotting when the AST,
 the lowering, or the CatCrypt core they target changes. Building it also runs the
-`#guard` checks of `Json.lean`, `FormJson.lean`, `EmitCheck.lean`,
+`#guard` checks of `Form.lean`, `Json.lean`, `FormJson.lean`, `EmitForm.lean`,
+`EmitMain.lean`,
+`EmitCheck.lean`, `Examples/PRFParamImport.lean`,
+`Examples/UUFKOAPremiseImport.lean`, `Examples/AEADParamImport.lean`,
 `Examples/OTPEquivImport.lean`, `Examples/HoareImport.lean`,
 `Examples/RestrictedImport.lean`, `Examples/AdversaryEquivImport.lean`,
 `Examples/FunctorGlobImport.lean`, `Examples/FunctorImport.lean`,

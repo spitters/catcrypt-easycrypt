@@ -40,6 +40,20 @@ parameters under the name `P` while the body's call stays the bare cross-path
 the cross-path carries no stamp to say which the call means, so `decodeParamsN`
 rejects a repeated parameter name.
 
+## Parameterised module types
+
+A module type may bind module parameters too — `module type Adversary (O :
+Oracle)` — and the export carries them in the type's `sig`, at the same shape a
+module's parameter list has. `EcModTypeN` is the image: the parameter list
+`EcParams` and the interface of the type's own procedures. A module parameter is
+not a type, so no procedure signature can mention one: the interface of a
+parameterised module type is the same plain procedure list an unparameterised
+one has, and what the parameters scope in EasyCrypt — which of their oracles
+each procedure may call, the export's `oinfos` — is not carried by the decode.
+A functor parameter declared at a parameterised module type resolves the same
+way: `decodeModTypeSig` reads the type's procedure list and drops its parameter
+list, so `decodeParamsN` accepts such a parameter.
+
 ## An applied module bound to a name does not decode
 
 `module G = F(M)` and `module G (X : I) = F(X, M)` export with the body kind
@@ -162,7 +176,11 @@ def decodeFunctorN (T : DecodeTables) (baseId : Nat) (j : Json) :
         functor: decode it with decodeModule"
     else
       let ps ← decodeParamsN T name paramsA.toList
-      let S ← decodeStructureBody T baseId name mpath modJ
+      -- Every parameter's procedures are resolvable inside the body, keyed by
+      -- the cross-paths its calls write; a call that discards its result reads
+      -- its signature there.
+      let S ← decodeStructureBody
+        (ps.foldl (fun T p => T.withInterfaceX p.1 p.2) T) baseId name mpath modJ
       .ok { name := name, params := ps, body := moduleOfStructure S }
 
 /-- Decode the functor `name` from an exporter envelope, with the globals of its
@@ -172,5 +190,145 @@ def importFunctorN (T : DecodeTables) (name : String) (j : Json)
   let e ← decodeEnvelope j
   let it ← findItem e name
   decodeFunctorN T baseId it
+
+/-! ## Parameterised module types -/
+
+/-- A parameterised module type `MT(X₁ : I₁) … (Xₙ : Iₙ)`: the parameters and
+the interface of the type's own procedures. The parameters do not occur in the
+procedure signatures — a module parameter is not a type — so the interface is
+the same shape an unparameterised module type has; see the module docstring for
+what the parameters scope in EasyCrypt and what the decode does not carry. -/
+structure EcModTypeN where
+  /-- The module type's name (provenance). -/
+  name : String
+  /-- The parameters, in declaration order. -/
+  params : EcParams
+  /-- The procedures a module of this type offers. -/
+  interface : EcInterface
+
+/-- Decode a `Th_modtype` item that binds at least one module parameter. The
+parameters decode as a functor's do (`decodeParamsN`), and the procedures decode
+through `decodeModSigProcs`. -/
+def decodeModTypeN (T : DecodeTables) (j : Json) : Except String EcModTypeN := do
+  let k ← getStr j "kind"
+  if k ≠ "Th_modtype" then
+    fail s!"item of kind '{k}' read as a module type"
+  else
+    let name ← getStr j "name"
+    let sigJ ← getObj j "sig"
+    let paramsA ← getArr sigJ "params"
+    if paramsA.isEmpty then
+      fail s!"module type '{name}' binds no parameter: decode it with \
+        decodeModTypeInterface"
+    else
+      let ps ← decodeParamsN T name paramsA.toList
+      let I ← decodeModSigProcs T sigJ
+      .ok { name := name, params := ps, interface := I }
+
+/-- Decode the parameterised module type `name` from an exporter envelope. -/
+def importModTypeN (T : DecodeTables) (name : String) (j : Json) :
+    Except String EcModTypeN := do
+  let e ← decodeEnvelope j
+  let it ← findItem e name
+  decodeModTypeN T it
+
+/-! ## Golden tests
+
+The checks below decode an inline parameterised module type of the
+`crypto/PRG.eca` shape — a `Distinguisher (G : RGA)` whose parameter's `next`
+returns an abstract type — following the `#guard` pattern of `Json.lean`. -/
+
+section Golden
+
+/-- A nullary type node at the path `p`. -/
+private def jTyAt (p : String) : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str p),
+              ("args", Json.arr #[])]
+
+/-- A procedure signature declaration with no named formal parameter, from the
+type at `argPath` to the type at `retPath`. -/
+private def jProcDecl (name argPath retPath : String) : Json :=
+  Json.mkObj [("name", Json.str name),
+              ("sig", Json.mkObj
+                [("args", Json.arr #[]),
+                 ("argty", jTyAt argPath), ("ret", jTyAt retPath)])]
+
+/-- A module-type parameter `name : mtName`, whose module type declares
+`procs`. -/
+private def jModTypeParam (name mtName : String) (procs : Array Json) : Json :=
+  Json.mkObj [("name", Json.str name), ("stamp", Json.num 7),
+              ("modtype", Json.mkObj
+                [("kind", Json.str "ModuleType"), ("name", Json.str mtName),
+                 ("params", Json.arr #[]), ("args", Json.arr #[]),
+                 ("sig", Json.mkObj
+                   [("params", Json.arr #[]), ("procs", Json.arr procs)])])]
+
+/-- The signature of `module type Distinguisher (G : RGA)`, where `RGA` declares
+`next : unit -> output` at the abstract type `Top.output` and the type's own
+procedure is `distinguish : unit -> bool`. -/
+private def jDistinguisherSig : Json :=
+  Json.mkObj
+    [("params", Json.arr
+       #[jModTypeParam "G" "Top.RGA"
+           #[jProcDecl "next" "Top.Pervasive.unit" "Top.output"]]),
+     ("procs", Json.arr
+       #[jProcDecl "distinguish" "Top.Pervasive.unit" "Top.Pervasive.bool"])]
+
+/-- The `Th_modtype` item declaring that `Distinguisher`. -/
+private def jDistinguisher : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_modtype"), ("name", Json.str "Distinguisher"),
+     ("path", Json.str "Top.Distinguisher"),
+     ("sig", jDistinguisherSig)]
+
+-- The parameterised module type decodes once the abstract type its parameter
+-- mentions is registered: one parameter at the declared interface, and the
+-- type's own procedure list.
+#guard (match decodeModTypeN (ecPrelude.withOpaqueType "Top.output")
+            jDistinguisher with
+        | .ok MT =>
+          MT.name == "Distinguisher"
+            && (match MT.params with
+                | [(pn, I)] =>
+                  pn == "G" && I.names == ["next"]
+                    && I.sig "next"
+                        == { arg := .unit, res := .opaque "Top.output" }
+                | _ => false)
+            && MT.interface.names == ["distinguish"]
+            && MT.interface.sig "distinguish" == { arg := .unit, res := .bool }
+        | _ => false)
+
+-- Against the default tables the same item is rejected: the parameter's `next`
+-- returns a type outside the type table.
+#guard (match decodeModTypeN ecPrelude jDistinguisher with
+        | .error _ => true
+        | _ => false)
+
+-- `decodeModTypeInterface` still rejects the parameterised item: its image is
+-- an `EcModTypeN`, not a bare `EcInterface`.
+#guard (match decodeModTypeInterface (ecPrelude.withOpaqueType "Top.output")
+            jDistinguisher with
+        | .error _ => true
+        | _ => false)
+
+/-- A functor parameter `D` declared at the parameterised `Distinguisher`. -/
+private def jParamDistinguisher : Json :=
+  Json.mkObj [("name", Json.str "D"), ("stamp", Json.num 9),
+              ("modtype", Json.mkObj
+                [("kind", Json.str "ModuleType"),
+                 ("name", Json.str "Top.Distinguisher"),
+                 ("params", Json.arr #[]), ("args", Json.arr #[]),
+                 ("sig", jDistinguisherSig)])]
+
+-- A functor parameter whose module type is itself parameterised resolves to
+-- that type's procedure list.
+#guard (match decodeParamsN (ecPrelude.withOpaqueType "Top.output") "IND"
+            [jParamDistinguisher] with
+        | .ok [(pn, I)] =>
+          pn == "D" && I.names == ["distinguish"]
+            && I.sig "distinguish" == { arg := .unit, res := .bool }
+        | _ => false)
+
+end Golden
 
 end CatCrypt.Crypto.EasyCryptImport

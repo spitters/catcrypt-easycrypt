@@ -190,7 +190,6 @@ theorem lowerClosedGame_freeGame (k : EcVarId) (hk : k.stamp.isSome) :
   rw [lowerStmts_assign, lowerStmts_sampleD, evalDistr_freeDistr k hk]
   simp only [lowerStmts_nil, sampleFrom_pure, SPComp.pure_bind, evalExpr,
     Env.read_update_same]
-  rfl
 
 /-- **The imported `Bound` is a uniform bit.** -/
 theorem lowerClosedGame_boundGame (k : EcVarId) :
@@ -420,6 +419,5 @@ theorem lowerClosedGame_scaledGame (k : EcVarId) :
       (by simp [evalExpr, Env.read_update_same])
   rw [lowerStmts_sampleD, evalDistr_scaledDistr, hcond]
   simp [lowerStmts_nil, SPComp.pure_bind, evalExpr, Env.read_update_same]
-  exact sampleFrom_pure true
 
 end CatCrypt.Crypto.EasyCryptImport.DistrBindImport

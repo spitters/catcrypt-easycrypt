@@ -14,7 +14,7 @@ editing it.
 
 * source: `tests/otp.ec`
 * source_digest: `e73f3b1113795b06a4132a39950a0a3d`
-* schema: `catcrypt-ec-export` version 5
+* schema: `catcrypt-ec-export` version 10
 * EasyCrypt build: `n/a`
 * theory root: `Top`
 
@@ -33,12 +33,12 @@ def otpArgModuleProcs : List (String × SigProc) :=
   [
     ("main",
       { sig := (EcSig.mk EcTy.unit EcTy.bool)
-        proc := EcProcAt.mk "_"
+        proc := EcProcAt.mk ["_"]
           [ (EcStmt.callProc "Top.OTPArg./enc" (EcSig.mk EcTy.bool EcTy.bool) (EcExpr.lit (t := EcTy.bool) true) "r") ]
           (EcExpr.var EcTy.bool "r") }),
     ("enc",
       { sig := (EcSig.mk EcTy.bool EcTy.bool)
-        proc := EcProcAt.mk "m"
+        proc := EcProcAt.mk ["m"]
           [ (EcStmt.sample EcTy.bool "k"),
             (EcStmt.ite (EcExpr.var EcTy.bool "m") [(EcStmt.assign EcTy.bool "c" (EcExpr.bxor (EcExpr.var EcTy.bool "k") (EcExpr.lit (t := EcTy.bool) true)))] [(EcStmt.assign EcTy.bool "c" (EcExpr.var EcTy.bool "k"))]) ]
           (EcExpr.var EcTy.bool "c") })

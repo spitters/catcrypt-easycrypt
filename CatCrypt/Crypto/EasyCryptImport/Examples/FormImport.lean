@@ -100,7 +100,7 @@ theorem otpEquivGoal_holds (m₀ m₁ : Bool) : otpEquivGoal m₀ m₁ :=
 def otpPrDiffForm : EcForm :=
   .allMem "m"
     (EcForm.prDiffCmp .eq "OTP0.main" (.lit (t := .unit) ())
-      "OTP1.main" (.lit (t := .unit) ()) (.named "m") (.const 0))
+      "OTP1.main" (.lit (t := .unit) ()) (.named "m") (EcProb.const (EcRealLit.mk 0)))
 
 /-- The imported statement, as a goal. -/
 noncomputable def otpPrDiffGoal (m₀ m₁ : Bool) : Prop :=
@@ -112,7 +112,7 @@ nodes land on `prTrue` through `transProb_prTrueOf`. -/
 theorem otpPrDiffGoal_eq (m₀ m₁ : Bool) :
     otpPrDiffGoal m₀ m₁
       = ∀ h : Heap, absDiff (prTrue (lowerClosedGame (otpGame m₀)) h)
-          (prTrue (lowerClosedGame (otpGame m₁)) h) = 0 := by
+          (prTrue (lowerClosedGame (otpGame m₁)) h) = (0 : ℕ) := by
   simp only [otpPrDiffGoal, importedProp, otpPrDiffForm, EcForm.prDiffCmp, transForm,
     transProb_absDiff, transProb_prTrueOf, cmpRel]
   rfl
@@ -127,7 +127,8 @@ theorem lowerGame_otp_eq (m₀ m₁ : Bool) :
 
 /-- The imported goal, closed. -/
 theorem otpPrDiffGoal_holds (m₀ m₁ : Bool) : otpPrDiffGoal m₀ m₁ := by
-  simp only [otpPrDiffGoal_eq, lowerGame_otp_eq m₀ m₁, absDiff_self, implies_true]
+  simp only [otpPrDiffGoal_eq, lowerGame_otp_eq m₀ m₁, absDiff_self, Nat.cast_zero,
+    implies_true]
 
 /-! ## An imported Hoare judgement
 

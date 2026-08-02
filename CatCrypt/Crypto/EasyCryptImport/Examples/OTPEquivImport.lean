@@ -7,6 +7,7 @@ import CatCrypt.Crypto.EasyCryptImport.FormJson
 import CatCrypt.Crypto.EasyCryptImport.FormToProp
 import CatCrypt.Crypto.EasyCryptImport.Examples.OTPImport
 import CatCryptCore.Relational.Rules
+import CatCryptCore.Relational.Frame
 
 /-!
 # Worked example: an EasyCrypt lemma from source text to a closed Lean goal
@@ -63,13 +64,13 @@ of `OTPImport.otpImport_coupling`, and the two are not comparable: the imported
 judgement has the weaker precondition (`True` against `eqPre`) and the weaker
 postcondition (results equal, against results and memories equal).
 
-`otpImport_coupling_gen` below is the coupling both statements are instances of.
-It is `otpImport_coupling`'s proof with the precondition left as a parameter,
-which is exactly what the two games admit: they read no heap location, so the
-same `xor`-by-`(m₀ ^ m₁)` coupling works from any pair of initial memories.
-`otpImport_coupling_of_gen` recovers `OTPImport.otpImport_coupling`'s statement
-from it definitionally, and `otpEquivGoal_holds` gets the imported goal from it
-by weakening the postcondition.
+`otpImport_coupling_gen` below is the coupling both statements are instances of:
+the coupling at a parametric precondition. It is the `xor`-by-`(m₀ ^ m₁)`
+coupling at `truePre` framed by `Relational.r_frame_of_preservesNothing`, which
+carries an arbitrary precondition across two computations that modify no heap
+location. `otpImport_coupling_of_gen` recovers `OTPImport.otpImport_coupling`'s
+statement from it definitionally, and `otpEquivGoal_holds` gets the imported goal
+from it by weakening the postcondition.
 -/
 
 set_option autoImplicit false
@@ -210,13 +211,12 @@ def otpPrEqForm : EcForm :=
 def otpPrDiffForm : EcForm :=
   .allMem "&m"
     (EcForm.prDiffCmp .eq "Top.OTP0./main" (.lit (t := .unit) ())
-      "Top.OTP1./main" (.lit (t := .unit) ()) (.named "&m") (.const 0))
+      "Top.OTP1./main" (.lit (t := .unit) ()) (.named "&m") (EcProb.const (EcRealLit.mk 0)))
 
 -- The decoder produces that form: EasyCrypt writes the difference as
 -- `add a (opp b)` under an absolute value, and that is the only shape with an
--- `EcProb.absDiff` image. The bound is left open in the pattern because `ℝ≥0∞`
--- has no computable equality, so this guard pins the shape of the statement and
--- not the value of its constant.
+-- `EcProb.absDiff` image. The guard pins the value of the bound as well as the
+-- shape of the statement, since `EcRealLit` carries the numeral the decoder read.
 #guard (match importedStatement "otp_pr_diff" with
         | .ok (.allMem "&m"
                 (.probCmp .eq
@@ -225,7 +225,7 @@ def otpPrDiffForm : EcForm :=
                        (.holds (.res .bool .cur)))
                     (.pr "Top.OTP1./main" ⟨.unit, .bool⟩ (.lit ()) (.named "&m")
                        (.holds (.res .bool .cur))))
-                  (.const _))) => true
+                  (EcProb.const (EcRealLit.mk 0)))) => true
         | _ => false)
 
 /-! ## The resolution environment
@@ -253,17 +253,36 @@ theorem otpEquivGoal_eq :
           (fun r₁ (_ : Heap) r₂ (_ : Heap) => r₁ = r₂) :=
   rfl
 
-/-- The one-time-pad coupling at an arbitrary precondition: the two games read no
-heap location, so the `xor`-by-`(m₀ ^ m₁)` coupling of `otpImport_coupling` works
-from any pair of initial memories, and carries the precondition through to the
-postcondition. -/
+/-- The one-time-pad coupling at the trivial precondition: the uniform key masks
+the message, so `xor`-by-`(m₀ ^ m₁)` couples the two runs and the two results
+agree. -/
+theorem otpImport_coupling_true (m₀ m₁ : Bool) :
+    pRHL truePre (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁))
+      (fun r₁ (_ : Heap) r₂ (_ : Heap) => r₁ = r₂) := by
+  rw [lowerGame_otpGame, lowerGame_otpGame]
+  refine rHoare_bij_step (boolXorBij (xor m₀ m₁)) fun a => rHoare_ret fun _ _ _ => ?_
+  cases a <;> cases m₀ <;> cases m₁ <;> rfl
+
+/-- The lowered game modifies no heap location: it samples a key and returns a
+value, and neither step writes. -/
+theorem preservesOutside_lowerClosedGame_otpGame (m : Bool) :
+    PreservesOutside (lowerClosedGame (otpGame m)) ∅ := by
+  rw [lowerGame_otpGame]
+  simpa using
+    preservesOutside_bind (preservesOutside_sample Bool)
+      (fun k => preservesOutside_pure (xor k m))
+
+/-- The one-time-pad coupling at an arbitrary precondition, by framing. The two
+games modify nothing, so `Relational.r_frame_of_preservesNothing` carries `Φ`
+from the initial pair of memories to the final pair and conjoins it to the
+postcondition of the coupling at `truePre`. -/
 theorem otpImport_coupling_gen (Φ : RPre) (m₀ m₁ : Bool) :
     pRHL Φ (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁))
-      (fun r₁ h₁ r₂ h₂ => r₁ = r₂ ∧ Φ h₁ h₂) := by
-  rw [lowerGame_otpGame, lowerGame_otpGame]
-  refine rHoare_bij_step (boolXorBij (xor m₀ m₁)) fun a =>
-    rHoare_ret fun _ _ hpre => ⟨?_, hpre⟩
-  cases a <;> cases m₀ <;> cases m₁ <;> rfl
+      (fun r₁ h₁ r₂ h₂ => r₁ = r₂ ∧ Φ h₁ h₂) :=
+  r_frame_of_preservesNothing
+    (preservesOutside_lowerClosedGame_otpGame m₀)
+    (preservesOutside_lowerClosedGame_otpGame m₁)
+    (otpImport_coupling_true m₀ m₁)
 
 /-- At `eqPre` the general coupling is `OTPImport.otpImport_coupling`'s
 statement, definitionally: `eqPost` is equality of results conjoined with

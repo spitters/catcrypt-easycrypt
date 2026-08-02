@@ -66,7 +66,6 @@ theorem lowerGame_otpGame (m : Bool) :
   simp only [lowerClosedGame, lowerGame, otpGame, lowerStmts_sample, lowerStmts_assign,
     lowerStmts_nil, evalExpr, Env.read_update_same, SPComp.bind_assoc, SPComp.pure_bind,
     sampleFin_bool]
-  rfl
 
 /-- **Perfect indistinguishability of the imported games** (pRHL): the two lowered
 one-time-pad games — encrypting `m₀` versus `m₁` — are pRHL-equal. The uniform key

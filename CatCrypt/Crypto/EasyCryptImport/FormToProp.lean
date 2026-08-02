@@ -5,6 +5,7 @@ Authors: CatCrypt Contributors
 -/
 import CatCrypt.Crypto.EasyCryptImport.Form
 import CatCrypt.Crypto.EasyCryptImport.Lower
+import CatCrypt.Crypto.EasyCryptImport.Params
 import CatCrypt.Crypto.EasyCryptImport.Restrictions
 import CatCryptCore.Unary.Event
 import CatCryptCore.Crypto.SDist
@@ -68,6 +69,35 @@ exporter fixture rather than written by hand.
 | `={glob M}` for a concrete `M` | `agreeOn (globLocs gs)` | |
 | `={glob A}` for a bound `A` | `agreeOn L` with `L` the binder's footprint | |
 | `islossless q` | `ProcLossless` | |
+| `is_lossless d` | `SDistr.mass … = 1` | the term's sub-distribution |
+| `op f : A -> B.` read by the statement | `∀ f : s.arg.interp → s.res.interp, …` | see below |
+| `op c : t.` read by the statement | `∀ v : t.interp, …` | see below |
+| `lemma l ['a] : φ.` | `∀ a : EcTy, …` | one binder per type parameter, outermost |
+
+An abstract operator of the theory a statement comes from is a parameter of the
+statement: `allOp` binds one realization per declared operator, at the signature
+the declaration gives it, and `EcTerm.opApp` at that path and signature reads the
+bound realization back. A declaration of no arguments binds at its own type
+instead (`allConst`), since that is the type the source gives it; the read stays
+at the uniform signature `⟨unit, t⟩` and `FormEnv.bindConst` answers it with the
+bound value (`evalTerm_opApp_bindConst`). An imported statement of a declaring theory therefore
+reads "for every realization of the operators it names, `φ`". The environment the
+realizations live in is `OpEnv` (`Params.lean`), and the statement binds every
+path it reads (`EcForm.opsOf`, `EcForm.assembleParams`), so no read resolves
+against `OpEnv.empty`, whose answer is the canonical inhabitant of the result code
+rather than the operator's meaning.
+
+A statement the source declares type parameters for is a family of statements,
+one per assignment of a type code to each parameter (`EcPolyForm`), and
+`importedPropPoly` binds the codes outside everything else: an operator's
+signature can name a type parameter, so the signature an operator binder ranges
+at is fixed only once the parameter is.
+
+The realizations a theory's lemma speaks about are the ones its axioms admit, so
+the goal of a lemma carries those axioms as premises inside the binders
+(`EcForm.assembleStatement`). The premise reading needs no translation function of
+its own: the premises are `EcForm.imp` nodes of the assembled statement, and
+`importedProp` translates them where they stand.
 
 An abstract module has no declared globals, so the set of locations its
 procedures read and write is a second bound variable of the module quantifier:
@@ -163,6 +193,9 @@ structure FormEnv where
   resCur : EcVal
   /-- The environment qualified procedure calls resolve against. -/
   procs : ProcEnv
+  /-- The realization of the abstract operators the statement reads, bound by
+  `EcForm.allOp` and read by `EcTerm.opApp`. -/
+  ops : OpEnv
   /-- The procedures a module binder brings into scope beyond the bound module
   itself. A statement that applies a functor to the module it binds names the
   image `F(A)` by a path of its own, and the importer has no functor decoder
@@ -188,6 +221,7 @@ noncomputable def initialFormEnv (ρ : ProcEnv) : FormEnv where
   resRight := EcVal.nil
   resCur := EcVal.nil
   procs := ρ
+  ops := OpEnv.empty
   functorImages := fun _ e => e
   modFootprints := fun _ => ∅
 
@@ -216,6 +250,18 @@ def FormEnv.bindMem (ρ : FormEnv) (m : String) (h : Heap) : FormEnv :=
 def FormEnv.bindProb (ρ : FormEnv) (x : String) (r : ℝ≥0∞) : FormEnv :=
   { ρ with probs := fun y => if y = x then r else ρ.probs y }
 
+/-- Bind the realization `f` of the abstract operator declared at `path` with
+signature `s`, so that `EcTerm.opApp path s` reads `f`. -/
+def FormEnv.bindOp (ρ : FormEnv) (path : String) {s : EcSig}
+    (f : s.arg.interp → s.res.interp) : FormEnv :=
+  { ρ with ops := ρ.ops.bindOp path f }
+
+/-- Bind the value `v` of the abstract constant declared at `path` with type `t`,
+so that `EcTerm.opApp path ⟨unit, t⟩` reads `v`. -/
+def FormEnv.bindConst (ρ : FormEnv) (path : String) (t : EcTy) (v : t.interp) :
+    FormEnv :=
+  { ρ with ops := ρ.ops.bindConst path t v }
+
 /-- Bind a module under the prefix `name`, so that a call to the cross-path
 `name./p` — the name the exporter writes for a procedure of the bound module —
 resolves to the module's implementation of `p`, and then extend the environment
@@ -241,18 +287,63 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
   | _, .ofExpr e, ρ => evalExpr e ρ.locals
   | _, .glob g m, ρ => (ρ.mem m).gget g.loc
   | _, .res t s, ρ => (ρ.resOf s).get t
+  | _, .opApp path s arg, ρ => ρ.ops path s (evalTerm arg ρ)
   | _, .bnot e, ρ => !(evalTerm e ρ)
   | _, .band a b, ρ => (evalTerm a ρ) && (evalTerm b ρ)
   | _, .bxor a b, ρ => xor (evalTerm a ρ) (evalTerm b ρ)
-  | _, .beq a b, ρ => decide (evalTerm a ρ = evalTerm b ρ)
+  | _, .beq (t := u) a b, ρ =>
+      -- The form layer is proof-only and this evaluation is already
+      -- noncomputable, so equality at a code outside `hasEq` is decided
+      -- classically here rather than gated as in `evalExpr`.
+      letI := Classical.decEq u.interp
+      decide (evalTerm a ρ = evalTerm b ρ)
   | _, .pair x y, ρ => (evalTerm x ρ, evalTerm y ρ)
   | _, .fst p, ρ => (evalTerm p ρ).1
   | _, .snd p, ρ => (evalTerm p ρ).2
   | _, .finAdd (n := n) a b, ρ =>
       (show Fin n from evalTerm a ρ) + (show Fin n from evalTerm b ρ)
+  | _, .intAdd a b, ρ =>
+      (show Int from evalTerm a ρ) + (show Int from evalTerm b ρ)
+  | _, .intMul a b, ρ =>
+      (show Int from evalTerm a ρ) * (show Int from evalTerm b ρ)
+  | _, .intOpp a, ρ => -(show Int from evalTerm a ρ)
+  | _, .intEdivz a b, ρ =>
+      (Int.ediv (show Int from evalTerm a ρ) (show Int from evalTerm b ρ),
+       Int.emod (show Int from evalTerm a ρ) (show Int from evalTerm b ρ))
+  | _, .intLe a b, ρ =>
+      decide ((show Int from evalTerm a ρ) ≤ (show Int from evalTerm b ρ))
+  -- The three membership tests answer `false` at an element code without
+  -- decidable equality, the value `evalExpr` answers with there.
+  | _, .mapMem (a := a) (b := b) m k, ρ =>
+      if h : a.hasEq = true then
+        EcTy.mapMem (a := a) (b := b) (evalTerm m ρ) (evalTerm k ρ) h
+      else false
+  | _, .listCons (a := a) x l, ρ =>
+      EcTy.listCons (a := a) (evalTerm x ρ) (evalTerm l ρ)
+  | _, .listSize (a := a) l, ρ => EcTy.listSize (a := a) (evalTerm l ρ)
+  | _, .listMem (a := a) l x, ρ =>
+      if h : a.hasEq = true then
+        EcTy.listMem (a := a) (evalTerm l ρ) (evalTerm x ρ) h
+      else false
+  | _, .fsetMem (a := a) s x, ρ =>
+      if h : a.hasEq = true then
+        EcTy.fsetMem (a := a) (evalTerm s ρ) (evalTerm x ρ) h
+      else false
   | _, .ite c thn els, ρ =>
       if (show Bool from evalTerm c ρ) then evalTerm thn ρ else evalTerm els ρ
   | _, .letIn (t' := t') x v body, ρ => evalTerm body (ρ.bindVar x ⟨t', evalTerm v ρ⟩)
+
+@[simp] theorem evalTerm_var (t : EcTy) (x : String) (ρ : FormEnv) :
+    evalTerm (.var t x) ρ = ρ.locals.read t x := rfl
+
+@[simp] theorem evalTerm_pair {a b : EcTy} (x : EcTerm a) (y : EcTerm b) (ρ : FormEnv) :
+    evalTerm (.pair x y) ρ = (evalTerm x ρ, evalTerm y ρ) := rfl
+
+@[simp] theorem evalTerm_fst {a b : EcTy} (p : EcTerm (.prod a b)) (ρ : FormEnv) :
+    evalTerm (.fst p) ρ = (evalTerm p ρ).1 := rfl
+
+@[simp] theorem evalTerm_snd {a b : EcTy} (p : EcTerm (.prod a b)) (ρ : FormEnv) :
+    evalTerm (.snd p) ρ = (evalTerm p ρ).2 := rfl
 
 @[simp] theorem evalTerm_ofExpr {t : EcTy} (e : EcExpr t) (ρ : FormEnv) :
     evalTerm (.ofExpr e) ρ = evalExpr e ρ.locals := rfl
@@ -267,8 +358,84 @@ theorem evalTerm_glob_finLoc (g : EcGlobal) (hfin : g.ty.isFin = true) (m : EcMe
     evalTerm (.glob g m) ρ = (ρ.mem m).get (g.finLoc hfin) :=
   Heap.gget_ofLocation (ρ.mem m) (g.finLoc hfin)
 
+@[simp] theorem evalTerm_intAdd (a b : EcTerm .int) (ρ : FormEnv) :
+    evalTerm (.intAdd a b) ρ
+      = (show Int from evalTerm a ρ) + (show Int from evalTerm b ρ) := rfl
+
+@[simp] theorem evalTerm_intMul (a b : EcTerm .int) (ρ : FormEnv) :
+    evalTerm (.intMul a b) ρ
+      = (show Int from evalTerm a ρ) * (show Int from evalTerm b ρ) := rfl
+
+@[simp] theorem evalTerm_intOpp (a : EcTerm .int) (ρ : FormEnv) :
+    evalTerm (.intOpp a) ρ = -(show Int from evalTerm a ρ) := rfl
+
+/-- `edivz` at a realization: the Euclidean quotient and remainder. -/
+@[simp] theorem evalTerm_intEdivz (a b : EcTerm .int) (ρ : FormEnv) :
+    evalTerm (.intEdivz a b) ρ
+      = (Int.ediv (show Int from evalTerm a ρ) (show Int from evalTerm b ρ),
+         Int.emod (show Int from evalTerm a ρ) (show Int from evalTerm b ρ)) := rfl
+
+@[simp] theorem evalTerm_intLe (a b : EcTerm .int) (ρ : FormEnv) :
+    evalTerm (.intLe a b) ρ
+      = decide ((show Int from evalTerm a ρ) ≤ (show Int from evalTerm b ρ)) := rfl
+
+@[simp] theorem evalTerm_listCons {a : EcTy} (x : EcTerm a) (l : EcTerm (.list a))
+    (ρ : FormEnv) :
+    evalTerm (.listCons x l) ρ = EcTy.listCons (a := a) (evalTerm x ρ) (evalTerm l ρ) :=
+  rfl
+
+@[simp] theorem evalTerm_listSize {a : EcTy} (l : EcTerm (.list a)) (ρ : FormEnv) :
+    evalTerm (.listSize l) ρ = EcTy.listSize (a := a) (evalTerm l ρ) := rfl
+
+/-- Map membership at an element code with decidable equality, the codes a
+decoded term carries. -/
+@[simp] theorem evalTerm_mapMem {a b : EcTy} (m : EcTerm (.map a b)) (k : EcTerm a)
+    (ρ : FormEnv) (hEq : a.hasEq = true := by rfl) :
+    evalTerm (.mapMem m k) ρ
+      = EcTy.mapMem (a := a) (b := b) (evalTerm m ρ) (evalTerm k ρ) hEq :=
+  dif_pos hEq
+
+/-- List membership at an element code with decidable equality, the codes a
+decoded term carries. -/
+@[simp] theorem evalTerm_listMem {a : EcTy} (l : EcTerm (.list a)) (x : EcTerm a)
+    (ρ : FormEnv) (hEq : a.hasEq = true := by rfl) :
+    evalTerm (.listMem l x) ρ
+      = EcTy.listMem (a := a) (evalTerm l ρ) (evalTerm x ρ) hEq :=
+  dif_pos hEq
+
+/-- Finite-set membership at an element code with decidable equality, the codes a
+decoded term carries. -/
+@[simp] theorem evalTerm_fsetMem {a : EcTy} (s : EcTerm (.fset a)) (x : EcTerm a)
+    (ρ : FormEnv) (hEq : a.hasEq = true := by rfl) :
+    evalTerm (.fsetMem s x) ρ
+      = EcTy.fsetMem (a := a) (evalTerm s ρ) (evalTerm x ρ) hEq :=
+  dif_pos hEq
+
 @[simp] theorem evalTerm_res (t : EcTy) (s : EcSide) (ρ : FormEnv) :
     evalTerm (.res t s) ρ = (ρ.resOf s).get t := rfl
+
+@[simp] theorem evalTerm_opApp (path : String) (s : EcSig) (arg : EcTerm s.arg)
+    (ρ : FormEnv) : evalTerm (.opApp path s arg) ρ = ρ.ops path s (evalTerm arg ρ) := rfl
+
+/-- The realization a bound operator reads: `allOp` extends the environment at
+the operator's own path and signature, and `opApp` there is the bound
+function. -/
+theorem evalTerm_opApp_bindOp (path : String) (s : EcSig) (arg : EcTerm s.arg)
+    (f : s.arg.interp → s.res.interp) (ρ : FormEnv) :
+    evalTerm (.opApp path s arg) (ρ.bindOp path f)
+      = f (evalTerm arg (ρ.bindOp path f)) := by
+  have h : (ρ.bindOp path f).ops path s = f := OpEnv.bindOp_same ρ.ops path f
+  rw [evalTerm_opApp, h]
+
+/-- The value a bound constant reads: `allConst` extends the environment at the
+constant's path and nullary signature, and the read there is the bound value,
+whatever the unit argument evaluates to. This is what makes the two layers agree:
+the read keeps the uniform signature and the binder ranges over the declared
+type. -/
+theorem evalTerm_opApp_bindConst (path : String) (t : EcTy) (v : t.interp)
+    (arg : EcTerm .unit) (ρ : FormEnv) :
+    evalTerm (.opApp path ⟨.unit, t⟩ arg) (ρ.bindConst path t v) = v :=
+  OpEnv.bindConst_same ρ.ops path t v _
 
 /-! ## Comparisons -/
 
@@ -318,7 +485,12 @@ noncomputable def transForm : EcForm → FormEnv → Prop
       ∀ (M : ModuleImpl I) (L : LocSet), Disjoint L (globLocs gs) →
         ModuleRespectsOn L M → ModuleRespectsLocs (globLocs gs) M →
           transForm body (ρ.bindModOn name M L)
+  | .allOp path s body, ρ =>
+      ∀ f : s.arg.interp → s.res.interp, transForm body (ρ.bindOp path f)
+  | .allConst path t body, ρ =>
+      ∀ v : t.interp, transForm body (ρ.bindConst path t v)
   | .lossless q s, ρ => ProcLossless (ρ.procs q s)
+  | .isLossless d, ρ => SDistr.mass (evalTerm d ρ) = 1
   | .probCmp cmp a b, ρ => cmpRel cmp (transProb a ρ) (transProb b ρ)
   | .hoare q s arg pre post, ρ =>
       pHoare (fun h => transForm pre { ρ with memCur := h })
@@ -329,7 +501,7 @@ noncomputable def transForm : EcForm → FormEnv → Prop
         cmpRel cmp
           (prEventComp (ρ.procs q s (evalTerm arg ρ)) h
             (fun r h' => transForm post { ρ with memCur := h', resCur := ⟨s.res, r⟩ }))
-          bd
+          bd.value
   | .equiv q₁ s₁ arg₁ q₂ s₂ arg₂ pre post, ρ =>
       pRHL (fun h₁ h₂ => transForm pre { ρ with memLeft := h₁, memRight := h₂ })
         (ρ.procs q₁ s₁ (evalTerm arg₁ ρ))
@@ -343,7 +515,7 @@ noncomputable def transProb : EcProb → FormEnv → ℝ≥0∞
   | .pr q s arg m ev, ρ =>
       prEventComp (ρ.procs q s (evalTerm arg { ρ with memCur := ρ.mem m })) (ρ.mem m)
         (fun r h' => transForm ev { ρ with memCur := h', resCur := ⟨s.res, r⟩ })
-  | .const r, _ => r
+  | .const r, _ => r.value
   | .pvar x, ρ => ρ.probs x
   | .add a b, ρ => transProb a ρ + transProb b ρ
   | .mul a b, ρ => transProb a ρ * transProb b ρ
@@ -360,6 +532,32 @@ imported lemma and leaves the proof open. -/
 noncomputable def importedProp (ρ : ProcEnv) (f : EcForm) : Prop :=
   transForm f (initialFormEnv ρ)
 
+/-- The Lean proposition a statement polymorphic in `n` type parameters denotes:
+one binder over the type codes per parameter, in the order the source declares
+them, around the imported statement at the codes they are bound to.
+
+The binders range over `EcTy`, the codes the ingestion knows, and not over
+`Type`; `Form.lean` records what that weakening is and why the alternative
+re-indexes the heap model. -/
+noncomputable def importedPropPoly (ρ : ProcEnv) : {n : Nat} → EcPolyForm n → Prop
+  | 0, f => importedProp ρ f
+  | _ + 1, f => ∀ a : EcTy, importedPropPoly ρ (f a)
+
+@[simp] theorem importedPropPoly_zero (ρ : ProcEnv) (f : EcPolyForm 0) :
+    importedPropPoly ρ f = importedProp ρ f := rfl
+
+@[simp] theorem importedPropPoly_succ (ρ : ProcEnv) {n : Nat} (f : EcPolyForm (n + 1)) :
+    importedPropPoly ρ f = ∀ a : EcTy, importedPropPoly ρ (f a) := rfl
+
+/-- The Lean proposition an imported statement denotes at a fixed realization of
+the abstract operators. This is the shape an imported `axiom` of a declaring
+theory takes: the statement is a hypothesis about the realization the enclosing
+statement binds, so its operators are supplied rather than quantified. A statement
+that is itself the goal binds its own operators and carries its theory's axioms as
+premises (`EcForm.assembleStatement`), and translates through `importedProp`. -/
+noncomputable def importedPropWithOps (ρ : ProcEnv) (ops : OpEnv) (f : EcForm) : Prop :=
+  transForm f { initialFormEnv ρ with ops := ops }
+
 /-- The Lean proposition an imported statement denotes when the statement names
 functor images: `images name` extends the resolution environment each time the
 module binder `name` is instantiated. -/
@@ -367,10 +565,26 @@ noncomputable def importedPropWith (ρ : ProcEnv)
     (images : String → ProcEnv → ProcEnv) (f : EcForm) : Prop :=
   transForm f { initialFormEnv ρ with functorImages := images }
 
-/-! ## Judgement-node unfolding
+/-! ## Node unfolding
 
 One equation per modal node, so a proof can see the CatCrypt judgement an
-imported statement lands on without unfolding the whole translation. -/
+imported statement lands on without unfolding the whole translation, together
+with the equations for the first-order nodes a statement about values is built
+from. -/
+
+@[simp] theorem transForm_allTy (t : EcTy) (x : String) (body : EcForm) (ρ : FormEnv) :
+    transForm (.allTy t x body) ρ
+      = ∀ v : t.interp, transForm body (ρ.bindVar x ⟨t, v⟩) := rfl
+
+@[simp] theorem transForm_exTy (t : EcTy) (x : String) (body : EcForm) (ρ : FormEnv) :
+    transForm (.exTy t x body) ρ
+      = ∃ v : t.interp, transForm body (ρ.bindVar x ⟨t, v⟩) := rfl
+
+@[simp] theorem transForm_eqT {t : EcTy} (a b : EcTerm t) (ρ : FormEnv) :
+    transForm (.eqT a b) ρ = (evalTerm a ρ = evalTerm b ρ) := rfl
+
+@[simp] theorem transForm_holds (b : EcTerm .bool) (ρ : FormEnv) :
+    transForm (.holds b) ρ = (evalTerm b ρ = true) := rfl
 
 @[simp] theorem transForm_equiv (q₁ : String) (s₁ : EcSig) (arg₁ : EcTerm s₁.arg)
     (q₂ : String) (s₂ : EcSig) (arg₂ : EcTerm s₂.arg) (pre post : EcForm) (ρ : FormEnv) :
@@ -390,13 +604,13 @@ imported statement lands on without unfolding the whole translation. -/
           (fun r h' => transForm post { ρ with memCur := h', resCur := ⟨s.res, r⟩ }) := rfl
 
 @[simp] theorem transForm_bdHoare (q : String) (s : EcSig) (arg : EcTerm s.arg)
-    (pre post : EcForm) (cmp : EcCmp) (bd : ℝ≥0∞) (ρ : FormEnv) :
+    (pre post : EcForm) (cmp : EcCmp) (bd : EcRealLit) (ρ : FormEnv) :
     transForm (.bdHoare q s arg pre post cmp bd) ρ
       = ∀ h : Heap, transForm pre { ρ with memCur := h } →
           cmpRel cmp
             (prEventComp (ρ.procs q s (evalTerm arg ρ)) h
               (fun r h' => transForm post { ρ with memCur := h', resCur := ⟨s.res, r⟩ }))
-            bd := rfl
+            bd.value := rfl
 
 @[simp] theorem transForm_allModRestr (name : String) (I : EcInterface)
     (gs : List EcGlobal) (body : EcForm) (ρ : FormEnv) :
@@ -427,6 +641,22 @@ imported statement lands on without unfolding the whole translation. -/
 
 @[simp] theorem transForm_lossless (q : String) (s : EcSig) (ρ : FormEnv) :
     transForm (.lossless q s) ρ = ProcLossless (ρ.procs q s) := rfl
+
+@[simp] theorem transForm_isLossless {t : EcTy} (d : EcTerm (.distr t)) (ρ : FormEnv) :
+    transForm (.isLossless d) ρ = (SDistr.mass (evalTerm d ρ) = 1) := rfl
+
+@[simp] theorem transForm_allOp (path : String) (s : EcSig) (body : EcForm)
+    (ρ : FormEnv) :
+    transForm (.allOp path s body) ρ
+      = ∀ f : s.arg.interp → s.res.interp, transForm body (ρ.bindOp path f) := rfl
+
+@[simp] theorem transForm_allConst (path : String) (t : EcTy) (body : EcForm)
+    (ρ : FormEnv) :
+    transForm (.allConst path t body) ρ
+      = ∀ v : t.interp, transForm body (ρ.bindConst path t v) := rfl
+
+@[simp] theorem transForm_imp (a b : EcForm) (ρ : FormEnv) :
+    transForm (.imp a b) ρ = (transForm a ρ → transForm b ρ) := rfl
 
 @[simp] theorem transForm_probCmp (cmp : EcCmp) (a b : EcProb) (ρ : FormEnv) :
     transForm (.probCmp cmp a b) ρ = cmpRel cmp (transProb a ρ) (transProb b ρ) := rfl

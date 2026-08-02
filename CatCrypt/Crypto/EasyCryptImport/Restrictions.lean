@@ -4,6 +4,7 @@ Released under MIT license as described in the file LICENSE.
 Authors: CatCrypt Contributors
 -/
 import CatCrypt.Crypto.EasyCryptImport.Modules
+import CatCryptCore.Relational.Frame
 import CatCryptCore.Relational.Rules
 import CatCryptCore.Unary.Event
 import CatCryptCore.Unary.Lossless
@@ -20,8 +21,8 @@ are stated with, and proves the lemmas that make them usable and satisfiable.
 
 ## `A{-M}` — memory restriction
 
-`agreeOff locs` relates two heaps that coincide outside the location ids `locs`.
-`RespectsLocs locs f` says the procedure `f` cannot observe or create a
+`agreeOff locs`, from the core relational vocabulary, relates two heaps that
+coincide outside the location ids `locs`. `RespectsLocs locs f` says the procedure `f` cannot observe or create a
 difference inside `locs`: run from two heaps agreeing outside `locs`, it returns
 equal values and leaves heaps that still agree outside `locs`. This is the
 `rHoare`-shaped image of EasyCrypt's `A{-M}` with `locs` the footprint
@@ -63,39 +64,6 @@ set_option autoImplicit false
 namespace CatCrypt.Crypto.EasyCryptImport
 
 open CatCrypt.Core CatCrypt.Prob CatCrypt.Relational CatCrypt.Unary
-
-/-! ## Heaps agreeing outside a footprint -/
-
-/-- Two heaps agree outside the location ids `locs`. This is the relational
-precondition an imported `A{-M}` restriction is stated against, with `locs` the
-footprint of `M`'s globals. -/
-def agreeOff (locs : LocSet) : RPre :=
-  fun h₁ h₂ => ∀ id, id ∉ locs → h₁.data.lookup id = h₂.data.lookup id
-
-theorem agreeOff_refl (locs : LocSet) (h : Heap) : agreeOff locs h h := fun _ _ => rfl
-
-theorem agreeOff_of_eq {locs : LocSet} {h₁ h₂ : Heap} (h : h₁ = h₂) :
-    agreeOff locs h₁ h₂ := h ▸ agreeOff_refl locs h₁
-
-/-- Writing to a location inside the footprint preserves agreement outside it —
-the frame property that makes a restricted adversary blind to protocol state. -/
-theorem agreeOff_set (locs : LocSet) (l : Location) (hl : l.id ∈ locs)
-    {h₁ h₂ : Heap} (h : agreeOff locs h₁ h₂) (v₁ v₂ : l.ty) :
-    agreeOff locs (h₁.set l v₁) (h₂.set l v₂) := by
-  intro id hid
-  have hne : id ≠ l.id := fun he => hid (he ▸ hl)
-  simpa only [Heap.set, Finmap.lookup_insert_of_ne _ hne] using h id hid
-
-/-- Overwriting the single location of the footprint with the same value turns
-agreement outside the footprint into heap equality. This is how an imported game
-that clears its module state at the end recovers a whole-heap postcondition from
-a restricted adversary's partial one. -/
-theorem heap_eq_of_agreeOff_singleton (l : Location) {h₁ h₂ : Heap}
-    (h : agreeOff {l.id} h₁ h₂) (v : l.ty) : h₁.set l v = h₂.set l v := by
-  refine Heap.ext_lookup (fun id => ?_)
-  by_cases hid : id = l.id
-  · subst hid; simp only [Heap.set, Finmap.lookup_insert]
-  · simpa only [Heap.set, Finmap.lookup_insert_of_ne _ hid] using h id (by simpa using hid)
 
 /-! ## Heaps agreeing on a footprint -/
 
@@ -173,6 +141,19 @@ theorem respectsLocs_of_isPure {α β : Type} (locs : LocSet) (f : α → SPComp
   obtain ⟨d, hd⟩ := hf x
   rw [hd h₁, hd h₂]
   exact liftR_bind (R := Eq) (liftR_refl d) (fun a a' haa' => liftR_pure ⟨haa', hpre⟩)
+
+/-- A procedure whose write-set is inside `locs`, and which returns equal values
+when started from heaps agreeing outside `locs`, is restricted. The heap half of
+the conclusion is the core frame rule `r_frame_agreeOff` applied to the value
+half: each run leaves the locations outside `locs` as it found them, and the two
+initial heaps agree there. -/
+theorem RespectsLocs.of_preservesOutside {α β : Type} {locs : LocSet} {f : α → SPComp β}
+    (hpres : ∀ x, PreservesOutside (f x) locs)
+    (hval : ∀ x, rHoare (agreeOff locs) (f x) (f x) (fun r₁ _ r₂ _ => r₁ = r₂)) :
+    RespectsLocs locs f := by
+  intro x
+  exact rHoare_mono_pre (r_frame_agreeOff (hpres x) (hpres x) (hval x))
+    (fun _ _ hpre => ⟨hpre, hpre⟩)
 
 /-- Restriction is closed under sequencing: running a restricted procedure and
 feeding its result to a restricted continuation is again restricted. A functor

@@ -90,14 +90,14 @@ def coinModule : EcModule where
   procs := fun p =>
     match p with
     | "set" =>
-        { param := anonymousLocal
+        { params := [anonymousLocal]
           body := [.store bGlobal (.lit true), .load bGlobal "r"]
           ret := .var .bool "r" }
     | "toss" =>
-        { param := anonymousLocal
+        { params := [anonymousLocal]
           body := [.sample .bool "c", .store bGlobal (.var .bool "c")]
           ret := .var .bool "c" }
-    | _ => { param := anonymousLocal, body := [], ret := .lit default }
+    | _ => { params := [anonymousLocal], body := [], ret := .lit default }
 
 /-- Whether an expression is the `bool` literal `v`. The type index is quantified,
 so this applies to the expression of an `EcStmt.store`, whose index is the stored
@@ -129,7 +129,7 @@ private def isBoolLitExpr {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
 #guard (match importModule ecPrelude "Coin" hoareExport with
         | .ok M =>
           (match M.procs "set" with
-           | { param := "_", body := [.store g₁ e₁, .load g₂ "r"], ret := _ } =>
+           | { params := ["_"], body := [.store g₁ e₁, .load g₂ "r"], ret := _ } =>
              g₁.name == "Top.Coin./b" && g₁.id == 0 && g₁.ty == .bool
                && isBoolLitExpr e₁ true
                && g₂.name == "Top.Coin./b" && g₂.id == 0 && g₂.ty == .bool
@@ -141,7 +141,7 @@ private def isBoolLitExpr {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
 #guard (match importModule ecPrelude "Coin" hoareExport with
         | .ok M =>
           (match M.procs "toss" with
-           | { param := "_", body := [.sample .bool "c", .store g e], ret := _ } =>
+           | { params := ["_"], body := [.sample .bool "c", .store g e], ret := _ } =>
              g.name == "Top.Coin./b" && g.id == 0 && g.ty == .bool
                && e.varName == some "c"
            | _ => false)
@@ -250,10 +250,9 @@ theorem setSetsGoal_holds : setSetsGoal := by
 /-! ## The imported bounded Hoare judgement
 
 The `#guard` on `toss_lossless` in `FormJson.lean` pins every field of the decoded
-statement except its bound, which `ℝ≥0∞` has no computable equality to compare.
-The form below therefore carries the bound the source writes, `1%r`, as a value
-this file states rather than one the decoder is checked against, and
-`tossLosslessGoal_eq` reads off the CatCrypt proposition it translates to.
+statement, its bound included. The form below carries that bound, `1%r`, and
+`tossLosslessGoal_eq` reads off the CatCrypt proposition it translates to; the
+bound appears there at `ℕ`, which is the type `EcRealLit.value` injects from.
 
 `tossLosslessGoal` stays a `def … : Prop`, which is what an imported statement is
 (`FormToProp.lean`): the goal is stated and the proof is left to a reader. Only
@@ -261,7 +260,7 @@ this file states rather than one the decoder is checked against, and
 
 /-- The statement of `toss_lossless` at the bound its source writes. -/
 def tossLosslessForm : EcForm :=
-  .bdHoare "Top.Coin./toss" coinSig (.lit (t := .unit) ()) .tru .tru .eq 1
+  .bdHoare "Top.Coin./toss" coinSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)
 
 /-- The imported statement of `toss_lossless`, as a goal. -/
 noncomputable def tossLosslessGoal : Prop := importedProp coinEnv tossLosslessForm
@@ -272,7 +271,7 @@ measured against the trivial event: the probability that it terminates at all is
 theorem tossLosslessGoal_eq :
     tossLosslessGoal
       = ∀ h : Heap, True →
-          prEventComp (coinImpl.proc "toss" ()) h (fun _ _ => True) = 1 :=
+          prEventComp (coinImpl.proc "toss" ()) h (fun _ _ => True) = (1 : ℕ) :=
   rfl
 
 end CatCrypt.Crypto.EasyCryptImport.HoareImport

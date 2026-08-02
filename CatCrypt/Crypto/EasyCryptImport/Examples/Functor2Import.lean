@@ -146,7 +146,7 @@ def keyModule : EcModule where
   interface := srcInterface
   globals := [kGlobal]
   procs := fun _ =>
-    { param := anonymousLocal
+    { params := [anonymousLocal]
       body := [.sample .bool "kk", .store kGlobal (.var .bool "kk")]
       ret := .var .bool "kk" }
 
@@ -159,7 +159,7 @@ def keyModule : EcModule where
                 | [{ name := "Top.Key./k", id := 0, ty := .bool }] => true
                 | _ => false)
             && (match M.procs "get" with
-                | { param := "_", body := [.sample .bool "kk", .store g e], ret := r } =>
+                | { params := ["_"], body := [.sample .bool "kk", .store g e], ret := r } =>
                   g.name == "Top.Key./k" && g.id == 0 && g.ty == .bool
                     && e.varName == some "kk" && r.varName == some "kk"
                 | _ => false)
@@ -205,7 +205,7 @@ def pairModule : EcModule where
   interface := pairInterface
   globals := []
   procs := fun _ =>
-    { param := anonymousLocal
+    { params := [anonymousLocal]
       body :=
         [ .callProc (xqualify "S" "get") ⟨.unit, .bool⟩ (.lit ()) "x",
           .callProc (xqualify "P" "guess") ⟨.bool, .bool⟩ (.var .bool "x") "b" ]
@@ -234,7 +234,7 @@ def pairFunctor : EcFunctorN where
             && F.body.interface.sig "main" == { arg := .unit, res := .bool }
             && F.body.globals.isEmpty
             && (match F.body.procs "main" with
-                | { param := "_",
+                | { params := ["_"],
                     body := [.callProc q₁ s₁ _ "x", .callProc q₂ s₂ a₂ "b"],
                     ret := r } =>
                   q₁ == "S./get" && s₁ == { arg := .unit, res := .bool }
@@ -409,26 +409,25 @@ def pairLlForm : EcForm :=
     (.allMod "B" srcInterface
       (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
         (.imp (.lossless (xqualify "B" "get") ⟨.unit, .bool⟩)
-          (.bdHoare pairPath mainSig (.lit (t := .unit) ()) .tru .tru .eq 1))))
+          (.bdHoare pairPath mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))))
 
 /-- The statement of `pair_key_ll`, as the decoder produces it. -/
 def pairKeyLlForm : EcForm :=
   .allMod "A" advInterface
     (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
-      (.bdHoare pairKeyPath mainSig (.lit (t := .unit) ()) .tru .tru .eq 1))
+      (.bdHoare pairKeyPath mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))
 
 -- The decoder produces those forms: two nested unrestricted module binders,
 -- `islossless` over each abstract module's procedure as the dedicated node, and
 -- `islossless` over the functor image as the bounded Hoare judgement at the
--- trivial event. The bound is left open in the pattern because `ℝ≥0∞` has no
--- computable equality.
+-- trivial event and the bound `1`.
 #guard (match importedStatement "pair_ll" with
         | .ok (.allMod "A" I
                 (.allMod "B" J
                   (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                     (.imp (.lossless "B./get" ⟨.unit, .bool⟩)
                       (.bdHoare "Top.Pair(A, B)./main" ⟨.unit, .bool⟩ (.lit ())
-                        .tru .tru .eq _))))) =>
+                        .tru .tru EcCmp.eq (EcRealLit.mk 1)))))) =>
           I.names == ["guess"] && I.sig "guess" == { arg := .bool, res := .bool }
             && J.names == ["get"] && J.sig "get" == { arg := .unit, res := .bool }
         | _ => false)
@@ -437,7 +436,7 @@ def pairKeyLlForm : EcForm :=
         | .ok (.allMod "A" I
                 (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                   (.bdHoare "Top.Pair(A, Top.Key)./main" ⟨.unit, .bool⟩ (.lit ())
-                    .tru .tru .eq _))) =>
+                    .tru .tru EcCmp.eq (EcRealLit.mk 1)))) =>
           I.names == ["guess"] && I.sig "guess" == { arg := .bool, res := .bool }
         | _ => false)
 
@@ -477,7 +476,7 @@ theorem pairLlGoal_eq :
     pairLlGoal
       = ∀ (A : ModuleImpl advInterface) (B : ModuleImpl srcInterface),
           ProcLossless (A.proc "guess") → ProcLossless (B.proc "get") →
-          ∀ h : Heap, True → prEventComp (pairMain A B) h (fun _ _ => True) = 1 :=
+          ∀ h : Heap, True → prEventComp (pairMain A B) h (fun _ _ => True) = (1 : ℕ) :=
   rfl
 
 /-- The translated goal for the mixed application, whose second argument is the
@@ -485,21 +484,21 @@ lowered `Key`. -/
 theorem pairKeyLlGoal_eq :
     pairKeyLlGoal
       = ∀ A : ModuleImpl advInterface, ProcLossless (A.proc "guess") →
-          ∀ h : Heap, True → prEventComp (pairKeyMain A) h (fun _ _ => True) = 1 :=
+          ∀ h : Heap, True → prEventComp (pairKeyMain A) h (fun _ _ => True) = (1 : ℕ) :=
   rfl
 
 /-- **The imported statement of `pair_ll`, closed.** -/
 theorem pairLlGoal_holds : pairLlGoal := by
   rw [pairLlGoal_eq]
   intro A B hA hB h _
-  rw [prEventComp_true]
+  rw [Nat.cast_one, prEventComp_true]
   exact pairMain_lossless A B hA hB h
 
 /-- **The imported statement of `pair_key_ll`, closed.** -/
 theorem pairKeyLlGoal_holds : pairKeyLlGoal := by
   rw [pairKeyLlGoal_eq]
   intro A hA h _
-  rw [prEventComp_true]
+  rw [Nat.cast_one, prEventComp_true]
   exact pairKeyMain_lossless A hA h
 
 end CatCrypt.Crypto.EasyCryptImport.Functor2Import

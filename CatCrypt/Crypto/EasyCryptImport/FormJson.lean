@@ -34,6 +34,67 @@ an error, and binding a source name that another live stamp already carries is a
 error too, because the AST names a variable by its source name and two binders
 sharing one name would alias.
 
+## An abstract operator is a parameter of the statement
+
+A theory-level `op f : T.` without a definition is a parameter, not a value the
+ingestion knows: `DecodeTables.absOpPaths` (`Json.lean`) holds the declarations of
+the theory a statement comes from, and a read of one decodes to `EcTerm.opApp` at
+the signature the declaration gives it. A declaration of `n` arguments is read at
+a signature whose argument code is those arguments' codes as a right-nested
+product, so an application of it decodes its arguments at their own codes and
+nests them the same way (`EcTerm.nestArgs`); the count comes from the application
+and the codes from the declaration, and an application the declared argument code
+does not accept is rejected naming both codes. `decodeAxiom` produces the statement with
+those reads free; closing it over them is `EcForm.assembleParams` (`Form.lean`),
+which binds one `EcForm.allOp` per read operator and leaves `EcForm.opsOf` of the
+result empty. A path in no table is an error, so a read cannot default to a value.
+
+## A concrete operator definition is read where it is read
+
+A theory-level `op f a b = e.` is a definition, not a parameter, and
+`DecodeTables.defOpPaths` holds it. `decodeTerm` decodes a read of one as the
+definition's body under one `EcTerm.letIn` per parameter, at the read site. The
+body is not a sub-node of the application that reads it, so the recursion is
+measured on the pair of the definitions still available and the node's size,
+ordered lexicographically: the body is decoded against the tables with that
+definition dropped, which is what makes the first component fall. An operator
+therefore cannot be reached from inside its own definition, mutually or
+otherwise, and the bound on a chain of reads is the length of the table rather
+than a number anyone chose. Each parameter is bound under its source name and its
+uniqueness stamp, so a definition's parameter can neither be refused for the name
+of a binder live at the read site nor capture it; each argument is decoded at its
+own type and compared with the code the declaration gives; and the body's decode
+is reported as a failure of the operator, naming it.
+
+## A type parameter is read at a reserved type path
+
+A statement written `lemma l ['a] : φ` declares type parameters, and a type
+position of `φ` naming one carries a `Tvar` node. `EcTy` is a closed universe of
+codes, so a type variable names no code. What it gets is a reserved type path,
+`#tyvar.` before its source name: `substTyParams` rewrites its occurrences to the
+nullary type constructor at that path, and `FormTables.withTyParam` enters the
+path in the ingestion's type table at the code the parameter is read at, so a
+`Tvar` resolves the way every other type does. Occurrences resolve by name, since
+the export writes a type parameter as a bare name while a `Tvar` node carries a
+name and a stamp; a name carrying two stamps in one statement, or an occurrence of
+a name the statement does not declare, is rejected.
+
+`decodeAxiomAt` takes the codes explicitly. `decodeAxiom` reads each parameter at
+the opaque code of its own reserved path, so the statement it produces is the
+source statement at one abstract type per parameter — a consequence of the
+source's, not the whole of it. The quantified reading is `EcPolyForm` together
+with `FormToProp.importedPropPoly`, which binds the codes outside everything else.
+
+## A lemma is stated under its theory's imported axioms
+
+The realizations an EasyCrypt lemma speaks about are the ones its theory's axioms
+admit. `decodeLemmaAt` reads an `axiom_kind: Lemma` item at its path, collects
+the `axiom_kind: Axiom` items of the scopes enclosing it (`scopeAxiomItems`),
+decodes each, and assembles `∀ params, ax₁ → … → statement`
+(`EcForm.assembleStatement`). An `axiom_kind: Axiom` item is refused as a goal,
+and an axiom of the scope that does not decode rejects the lemma naming that
+axiom.
+
 ## Signatures come from the export
 
 `EcForm.hoare`, `EcForm.bdHoare`, `EcForm.equiv` and `EcProb.pr` carry the
@@ -49,10 +110,16 @@ table is an error.
 |---|---|
 | `Flocal` at a bound stamp | `EcTerm.var`, and `EcProb.pvar` at `real` |
 | `Fop p`, `p` in `constPaths` | `EcTerm.lit`, and `EcForm.tru` / `.fls` at the booleans |
+| `Fop p`, `p` in `absOpPaths` | `EcTerm.opApp` at the declared signature |
+| `Fapp` of `Fop p`, `p` in `absOpPaths` | `EcTerm.opApp` at the declared signature, applied to the arguments as the right-nested pair |
+| `Fapp` of `is_lossless` to a distribution-typed term | `EcForm.isLossless` |
 | `Fpvar` of `PVloc res` | `EcTerm.res` at the memory's side |
 | `Fpvar` of `PVglob` | `EcTerm.glob` |
 | `Fapp` of a boolean operator | the matching `EcTerm` node, or the matching `EcForm` connective |
 | `Fapp` of `=` at a type code | `EcTerm.beq` / `EcForm.eqT` |
+| `Fapp` of integer `+` / `<=` | `EcTerm.intAdd` / `.intLe` |
+| `Fapp` of integer `<` | `EcTerm.bnot` of the reversed `.intLe` |
+| `Fapp` of `dom` / `::` / `size` / list `mem` / set `mem` | `EcTerm.mapMem` / `.listCons` / `.listSize` / `.listMem` / `.fsetMem` |
 | `Fapp` of `=`, `<=`, `<` at `real` | `EcForm.probCmp` |
 | `Ftuple`, `Fproj` | `EcTerm.pair`, `.fst` / `.snd` |
 | `Fif`, `Flet` of an `LSymbol` | `EcTerm.ite` / `EcForm.ifF`, `EcTerm.letIn` / `EcForm.letF` |
@@ -80,9 +147,9 @@ list `Form.lean` gives:
 * `Fglob` in value position, and as a formula on its own: a footprint-restricted
   memory is not a value of an `EcTy`, and a footprint is not a proposition. An
   equality of two `Fglob` reads is in the fragment, as a footprint comparison;
-* integer arithmetic in a term: an integer literal is an `EcTerm.lit` at the
-  `int` code, and `EcTerm` has no addition or comparison on integers, so an
-  applied integer operator is rejected by path;
+* integer multiplication, negation and division in a term: `EcTerm` carries
+  addition and the order comparison, and no other integer operator, so an
+  application of one is rejected by path;
 * any real term outside the probability fragment — in particular a quotient, a
   signed negation, and a signed difference of two probabilities;
 * `Fpvar` of a `PVloc` other than `res`, the procedure-local read at a memory;
@@ -92,7 +159,15 @@ list `Form.lean` gives:
   against a module's footprint;
 * a bounded Hoare judgement over an abstract module's procedure other than
   `islossless`: the module has no body to reason against;
+* a read of an operator whose declaration does not register — a defined operator,
+  a polymorphic one (`Json.lean`'s `decodeThOperatorAbstract`) — which reports
+  the unknown-path error of its read site;
+* an application of a declared operator whose arguments do not nest into the
+  declared argument code, which names the declared code and the code the
+  arguments nest into;
 * a `Th_axiom` with type parameters;
+* an `axiom_kind: Lemma` item one of whose scope's imported axioms does not
+  decode, which reports that axiom's own error under the lemma's path;
 * an `Unsupported` node, which the exporter emits for a construct outside its own
   coverage.
 -/
@@ -136,6 +211,8 @@ structure FormPaths where
   realLt : String
   /-- Propositional equivalence. -/
   iffOp : String
+  /-- The predicate asserting that a distribution has total mass one. -/
+  losslessOp : String
   /-- The name EasyCrypt gives the result of a judgement. -/
   resName : String
 
@@ -150,6 +227,7 @@ def ecFormPaths : FormPaths where
   realLe := "Top.CoreReal.le"
   realLt := "Top.CoreReal.lt"
   iffOp := "Top.Pervasive.<=>"
+  losslessOp := "Top.Distr.is_lossless"
   resName := "res"
 
 /-- The tables a statement decodes against: the program fragment's dispatch
@@ -181,12 +259,23 @@ structure FormTables where
   mems : List (Nat × EcMemRef)
   /-- The source name each bound logical variable's stamp carries. -/
   locals : List (Nat × String)
+  /-- The theory items a statement's scope is read from: the item list of the
+  envelope it comes from, whose `Th_theory` items hold the inner scopes. A lemma
+  is stated under the imported axioms of the scopes enclosing it, which
+  `scopeAxiomItems` finds here. -/
+  scopeItems : List Json
+  /-- The first heap location id no module has been given. Distinct modules hold
+  distinct state, so each is decoded at a range disjoint from every other's, and
+  this is where the next range starts. A scope inside a theory continues from the
+  enclosing scope's value rather than restarting. -/
+  nextLoc : Nat := 0
 
 /-- The tables for a statement about the modules of one export, with no binder in
 scope. -/
 def formTables (T : DecodeTables) (procSigs : List (String × EcSig))
     (modTypes : List (String × EcInterface) := [])
-    (modGlobals : List (String × List EcGlobal) := []) : FormTables where
+    (modGlobals : List (String × List EcGlobal) := [])
+    (scopeItems : List Json := []) : FormTables where
   tables := T
   paths := ecFormPaths
   procSigs := procSigs
@@ -196,6 +285,7 @@ def formTables (T : DecodeTables) (procSigs : List (String × EcSig))
   modBinderStamps := []
   mems := []
   locals := []
+  scopeItems := scopeItems
 
 /-! ## Binder environments -/
 
@@ -433,6 +523,149 @@ def isAppOf (p : String) (j : Json) : Bool :=
 def EcTerm.castTy {a b : EcTy} (h : a = b) (e : EcTerm a) : EcTerm b :=
   cast (congrArg EcTerm h) e
 
+/-! ## The definitions a read still has left
+
+A read of a concrete operator declaration decodes to the operator's definition,
+and the definition is decoded in turn, so `decodeTerm` recurses into a node that
+is not a sub-node of the one it started from. What decreases instead is the table
+of definitions: the body is decoded against the table with that operator dropped,
+so an operator cannot be reached from inside its own definition and a chain of
+definitions is as long as the table. The measure `decodeTerm` recurses on is the
+pair of that table's length and the node's size, ordered lexicographically; the
+lemma below is the decrease of the first component. -/
+
+/-- The tables with the definition of `path` dropped. -/
+def FormTables.withoutDefOp (F : FormTables) (path : String) : FormTables :=
+  { F with tables :=
+      { F.tables with
+        defOpPaths := F.tables.defOpPaths.filter (fun e => e.1 != path) } }
+
+/-- Binding a logical variable leaves the dispatch tables alone, which is what
+lets a recursion measured on them descend under a binder. -/
+theorem bindLocal_tables {F F' : FormTables} {st : Nat} {nm : String}
+    (h : F.bindLocal st nm = .ok F') : F'.tables = F.tables := by
+  unfold FormTables.bindLocal at h
+  split at h
+  · simp [fail] at h
+  · injection h with h
+    subst h
+    rfl
+
+/-- Dropping an entry a lookup finds shortens the list. -/
+theorem length_filter_ne_lt_of_lookup {β : Type} (l : List (String × β)) (p : String)
+    (h : (List.lookup p l).isSome) :
+    (l.filter (fun e => e.1 != p)).length < l.length := by
+  induction l with
+  | nil => simp at h
+  | cons a as ih =>
+    rw [List.filter_cons]
+    by_cases hp : p = a.1
+    · rw [if_neg (by simp [hp])]
+      exact Nat.lt_succ_of_le (List.length_filter_le _ _)
+    · rw [if_pos (by simp [Ne.symm hp])]
+      have hb : (p == a.1) = false := by simpa using hp
+      have hlk : (List.lookup p as).isSome := by
+        simpa [List.lookup, hb] using h
+      simpa using Nat.succ_lt_succ (ih hlk)
+
+/-- The definitions left after the one at `path` is dropped are fewer. -/
+theorem withoutDefOp_length_lt (F : FormTables) (path : String)
+    (h : (List.lookup path F.tables.defOpPaths).isSome) :
+    (F.withoutDefOp path).tables.defOpPaths.length
+      < F.tables.defOpPaths.length :=
+  length_filter_ne_lt_of_lookup _ _ h
+
+/-- The decrease in the shape a lookup at a read site produces it. -/
+theorem withoutDefOp_length_lt_of_eq (F : FormTables) (path : String) {d : EcOpDefn}
+    (h : List.lookup path F.tables.defOpPaths = some d) :
+    (F.withoutDefOp path).tables.defOpPaths.length
+      < F.tables.defOpPaths.length :=
+  withoutDefOp_length_lt F path (by rw [h]; rfl)
+
+/-! ## Reading a concrete operator definition
+
+A theory-level `op f a b = e.` is a definition the source fixes, and
+`DecodeTables.defOpPaths` (`Json.lean`) holds it as an `EcOpDefn`: the parameters
+at their declared codes, the result code, and the body node. A read of one
+decodes to the body with the parameters bound to the arguments, which is what
+`EcTerm.letIn` expresses.
+
+The body is decoded where the read is, so the decode walks only the definitions
+the statement actually reaches, and a statement whose own nodes leave the
+fragment first fails there with no body looked at.
+
+What makes this the shape to keep is not what it decodes — it decodes the same
+statements a rewriting of the whole node before the decode would. It is the
+termination argument. `decodeTerm` recurses on the pair of the definitions still
+available and the node's size, ordered lexicographically, and the body is decoded
+against the tables with that definition dropped, so the length of the table
+bounds a chain of reads. A definition that reads itself, mutually or otherwise,
+cannot be built, rather than being caught: `decodeThOperatorConcrete`'s check that
+a defining form does not name its own path (`mentionsPath`, `Json.lean`) is a
+better error message for a case that is already impossible here, and the decode
+rests on the measure rather than on the corpus being acyclic.
+
+**Names.** `EcTerm.letIn` binds by source name and `FormTables.bindLocal` refuses
+a source name another live binder carries, so a definition whose parameter is
+named `a`, read inside a statement quantifying its own `a`, would be refused;
+binding it without that check would instead capture the statement's own `a`
+silently. Each parameter is bound under its source name and its uniqueness stamp
+(`opParamName`), and its occurrences in the body carry that stamp, so they resolve
+to the renamed binder.
+
+**Types.** Each argument is decoded at its own `ty` and the resulting codes are
+compared with the codes the declaration gives the parameters, so an argument the
+declaration does not accept is named rather than bound.
+
+**Provenance.** The body's decode is reported as a failure of the operator,
+naming it, since the node it fails at is one the statement does not contain. -/
+
+/-- The name a definition's parameter is bound under: its source name and its
+uniqueness stamp. -/
+def opParamName (x : EcVarId) : String :=
+  match x.stamp with
+  | some s => s!"{x.name}_{s}"
+  | none => x.name
+
+/-- The tables with each of a definition's parameters bound as a logical
+variable, under the name `opParamName` gives it. -/
+def bindOpParams (F : FormTables) (path : String) :
+    List (EcVarId × EcTy) → Except String FormTables
+  | [] => .ok F
+  | (x, _) :: rest =>
+    match x.stamp with
+    | none =>
+      fail s!"the operator '{path}' is defined with a parameter '{x.name}' that \
+        carries no uniqueness stamp, so its occurrences in the body cannot be \
+        resolved"
+    | some st =>
+      match F.bindLocal st (opParamName x) with
+      | .error e => .error e
+      | .ok F' => bindOpParams F' path rest
+
+/-- Binding a definition's parameters leaves the dispatch tables alone. -/
+theorem bindOpParams_tables {path : String} :
+    ∀ {ps : List (EcVarId × EcTy)} {F F' : FormTables},
+      bindOpParams F path ps = .ok F' → F'.tables = F.tables
+  | [], F, F', h => by
+      unfold bindOpParams at h; injection h with h; exact congrArg _ h.symm
+  | (x, _) :: rest, F, F', h => by
+      unfold bindOpParams at h
+      split at h
+      · simp [fail] at h
+      · rename_i st _
+        split at h
+        · simp at h
+        · rename_i F₁ hbl
+          exact (bindOpParams_tables h).trans (bindLocal_tables hbl)
+
+/-- The term `body` under one `letIn` per bound parameter, the first parameter
+outermost. -/
+def wrapOpLets {t : EcTy} :
+    List (String × (u : EcTy) × EcTerm u) → EcTerm t → EcTerm t
+  | [], e => e
+  | (nm, ⟨_, v⟩) :: rest, e => .letIn nm v (wrapOpLets rest e)
+
 /-- The judgement node kinds, which are formulas and never terms or
 probabilities. -/
 def judgementKinds : List String :=
@@ -490,11 +723,75 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
           match getStr j "path" with
           | .error e => .error e
           | .ok p =>
+            -- The canonical nullary values, at the codes that have one. These are
+            -- the tables the expression layer reads at an `Eop`, so the two
+            -- layers give the same path the same value.
+            if F.tables.emptyMapPaths.contains p then
+              match t with
+              | .map _ _ => .ok (.lit [])
+              | _ =>
+                fail s!"the empty finite map '{p}' at type {repr t}: only a map \
+                  code has one"
+            else if F.tables.emptyFsetPaths.contains p then
+              match t with
+              | .fset a => .ok (.lit (EcTy.fsetEmpty (a := a)))
+              | _ =>
+                fail s!"the empty finite set '{p}' at type {repr t}: only an \
+                  fset code has one"
+            else if F.tables.emptyListPaths.contains p then
+              match t with
+              | .list a => .ok (.lit (EcTy.listEmpty (a := a)))
+              | _ =>
+                fail s!"the empty list '{p}' at type {repr t}: only a list code \
+                  has one"
+            else if F.tables.nonePaths.contains p then
+              match t with
+              | .option a => .ok (.lit (EcTy.noneVal (a := a)))
+              | _ =>
+                fail s!"'{p}' at type {repr t}: only an option code has an \
+                  absent value"
+            else if F.tables.witnessPaths.contains p then
+              .ok (.lit default)
+            else
             match List.lookup p F.tables.constPaths with
             | none =>
-              fail s!"unknown nullary operator path '{p}' in {j.compress}: the \
-                ingestion's constant table has no entry, so the operator has no \
-                EcTerm image"
+              -- An abstract operator declared by the theory the statement comes
+              -- from is a parameter of the statement, read at the signature its
+              -- declaration gives it. Only a nullary declaration registers, so
+              -- the argument is the unit literal.
+              match List.lookup p F.tables.absOpPaths with
+              | some s =>
+                if harg : s.arg = EcTy.unit then
+                  if hres : s.res = t then
+                    .ok (EcTerm.castTy hres
+                      (.opApp p s (EcTerm.castTy harg.symm (.lit (t := .unit) ()))))
+                  else
+                    fail s!"the abstract operator '{p}' is declared at result \
+                      type {repr s.res}, context expects {repr t}"
+                else
+                  fail s!"the abstract operator '{p}' is declared at argument \
+                    type {repr s.arg} and read with no argument"
+              | none =>
+                -- A concrete declaration of the theory the statement comes from
+                -- is a definition, read as the term it abbreviates. The body is
+                -- decoded against the tables with this definition dropped.
+                match _hdc : List.lookup p F.tables.defOpPaths with
+                | some d =>
+                  if d.params ≠ [] then
+                    fail s!"the operator '{p}' is defined with \
+                      {d.params.length} parameter(s) and read as a value: EcTy \
+                      has no arrow code, so an unapplied definition has no image"
+                  else
+                    match decodeTerm (F.withoutDefOp p) t d.body with
+                    | .ok e => .ok e
+                    | .error m =>
+                      fail s!"the operator '{p}' is defined by a term that does \
+                        not decode: {m}"
+                | none =>
+                  fail s!"unknown nullary operator path '{p}' in {j.compress}: the \
+                    ingestion's constant table has no entry and no operator \
+                    declaration registers the path, so the operator has no \
+                    EcTerm image"
             | some v =>
               if h : v.ty = t then .ok (.lit (v.transport h))
               else
@@ -622,7 +919,7 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                     match decodeTyField F.tables bJ "ty" with
                     | .error e => .error e
                     | .ok t' =>
-                      match F.bindLocal st nm with
+                      match _htbl : F.bindLocal st nm with
                       | .error e => .error e
                       | .ok F' =>
                         match _htv : getObj j "value" with
@@ -653,9 +950,90 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
               | .ok p =>
                 match List.lookup p F.tables.opPaths with
                 | none =>
-                  fail s!"unknown operator path '{p}' applied in {j.compress}: \
-                    the ingestion's operator table has no entry, so the \
-                    application has no EcTerm image"
+                  -- An abstract operator declared by the theory the statement
+                  -- comes from is a parameter of the statement, applied at the
+                  -- signature its declaration gives it. The argument count comes
+                  -- from the application and the argument codes from the
+                  -- declaration, so an argument list whose types do not nest
+                  -- into the declared argument code is a mismatch between the
+                  -- two and is named as one.
+                  match List.lookup p F.tables.absOpPaths with
+                  | some s =>
+                    if hres : s.res = t then
+                      match _hoa : getArr j "args" with
+                      | .error e => .error e
+                      | .ok arr =>
+                        match arr.toList.attach.mapM (fun ⟨x, _⟩ =>
+                            match decodeTyField F.tables x "ty" with
+                            | .error e => Except.error e
+                            | .ok u =>
+                              match decodeTerm F u x with
+                              | .error e => Except.error e
+                              | .ok xe => Except.ok (Sigma.mk u xe)) with
+                        | .error e => .error e
+                        | .ok [] =>
+                          fail s!"the abstract operator '{p}' is applied to no \
+                            arguments in {j.compress}"
+                        | .ok (a :: rest) =>
+                          let n := EcTerm.nestArgs a rest
+                          if harg : n.1 = s.arg then
+                            .ok (EcTerm.castTy hres
+                              (.opApp p s (EcTerm.castTy harg n.2)))
+                          else
+                            fail s!"the abstract operator '{p}' is declared at \
+                              argument type {repr s.arg} and applied to \
+                              {arr.size} arguments, whose types nest as \
+                              {repr n.1}"
+                    else
+                      fail s!"the abstract operator '{p}' is declared at result \
+                        type {repr s.res}, context expects {repr t}"
+                  | none =>
+                    -- A concrete declaration is a definition, and its read is
+                    -- the body under one binder per parameter. The arguments are
+                    -- decoded at the read site and the body against the tables
+                    -- with this definition dropped, so a chain of reads is as
+                    -- long as the table and no shorter measure is needed.
+                    match _hda : List.lookup p F.tables.defOpPaths with
+                    | none =>
+                      fail s!"unknown operator path '{p}' applied in {j.compress}: \
+                        the ingestion's operator table has no entry and no \
+                        operator declaration registers the path, so the \
+                        application has no EcTerm image"
+                    | some d =>
+                      if hres : d.res = t then
+                        match _hdr : getArr j "args" with
+                        | .error e => .error e
+                        | .ok arr =>
+                          match arr.toList.attach.mapM (fun ⟨x, _⟩ =>
+                              match decodeTyField F.tables x "ty" with
+                              | .error e => Except.error e
+                              | .ok u =>
+                                match decodeTerm F u x with
+                                | .error e => Except.error e
+                                | .ok xe => Except.ok (Sigma.mk u xe)) with
+                          | .error e => .error e
+                          | .ok vs =>
+                            if vs.map Sigma.fst = d.params.map Prod.snd then
+                              match _hbp : bindOpParams (F.withoutDefOp p) p d.params with
+                              | .error e => .error e
+                              | .ok F' =>
+                                match decodeTerm F' d.res d.body with
+                                | .error m =>
+                                  fail s!"the operator '{p}' is defined by a \
+                                    term that does not decode: {m}"
+                                | .ok be =>
+                                  .ok (EcTerm.castTy hres
+                                    (wrapOpLets
+                                      ((d.params.map (fun q => opParamName q.1)).zip vs)
+                                      be))
+                            else
+                              fail s!"the operator '{p}' is defined at argument \
+                                types {repr (d.params.map Prod.snd)} and applied \
+                                to arguments of types \
+                                {repr (vs.map Sigma.fst)}"
+                        else
+                          fail s!"the operator '{p}' is defined at result type \
+                            {repr d.res}, context expects {repr t}"
                 | some op =>
                   match _harr : getArr j "args" with
                   | .error e => .error e
@@ -731,6 +1109,139 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                           | .error e => .error e
                           | .ok ye => .ok (.finAdd xe ye)
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intAdd, .int =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.intAdd xe ye)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intMul, .int =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.intMul xe ye)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intOpp, .int =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe => .ok (.intOpp xe)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    | .intEdivz, .prod .int .int =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.intEdivz xe ye)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intLe, .bool =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.intLe xe ye)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intLt, .bool =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.bnot (.intLe ye xe))
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .mapMem, .bool =>
+                      match arr.toList.attach with
+                      | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                        match decodeTyField F.tables mJ "ty" with
+                        | .error e => .error e
+                        | .ok (.map a b) =>
+                          match decodeTerm F (.map a b) mJ with
+                          | .error e => .error e
+                          | .ok me =>
+                            match decodeTerm F a kJ with
+                            | .error e => .error e
+                            | .ok ke => .ok (.mapMem me ke)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a finite map"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .listCons, .list a =>
+                      match arr.toList.attach with
+                      | [⟨xJ, _⟩, ⟨lJ, _⟩] =>
+                        match decodeTerm F a xJ with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F (.list a) lJ with
+                          | .error e => .error e
+                          | .ok le => .ok (.listCons xe le)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .listSize, .int =>
+                      match arr.toList.attach with
+                      | [⟨lJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          match decodeTerm F (.list a) lJ with
+                          | .error e => .error e
+                          | .ok le => .ok (.listSize le)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    | .listMem, .bool =>
+                      match arr.toList.attach with
+                      | [⟨lJ, _⟩, ⟨xJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          if !a.hasEq then
+                            fail s!"'{p}' at the element type {repr a}: membership \
+                              compares elements, and that type has no decidable \
+                              equality"
+                          else
+                            match decodeTerm F (.list a) lJ with
+                            | .error e => .error e
+                            | .ok le =>
+                              match decodeTerm F a xJ with
+                              | .error e => .error e
+                              | .ok xe => .ok (.listMem le xe)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .fsetMem, .bool =>
+                      match arr.toList.attach with
+                      | [⟨sJ, _⟩, ⟨xJ, _⟩] =>
+                        match decodeTyField F.tables sJ "ty" with
+                        | .error e => .error e
+                        | .ok (.fset a) =>
+                          match decodeTerm F (.fset a) sJ with
+                          | .error e => .error e
+                          | .ok se =>
+                            match decodeTerm F a xJ with
+                            | .error e => .error e
+                            | .ok xe => .ok (.fsetMem se xe)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a finite set"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                     | _, _ =>
                       fail s!"operator '{p}' cannot produce a value of type {repr t}"
             | .ok k =>
@@ -739,11 +1250,17 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
         else
           fail s!"unsupported formula node kind '{kind}' in term position in \
             {j.compress}"
-termination_by jsonSize j
+termination_by (F.tables.defOpPaths.length, jsonSize j)
 decreasing_by
   all_goals first
-    | exact getArr_decreases (by assumption) (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
-    | exact getObj_decreases (by assumption)
+    | exact Prod.Lex.right _
+        (getArr_decreases (by assumption) (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
+    | exact Prod.Lex.right _ (getObj_decreases (by assumption))
+    | (rw [bindLocal_tables (by assumption)]
+       exact Prod.Lex.right _ (getObj_decreases (by assumption)))
+    | exact Prod.Lex.left _ _ (withoutDefOp_length_lt_of_eq _ _ (by assumption))
+    | (rw [bindOpParams_tables (by assumption)]
+       exact Prod.Lex.left _ _ (withoutDefOp_length_lt_of_eq _ _ (by assumption)))
 
 /-! ## Footprint comparisons over a tuple
 
@@ -824,7 +1341,14 @@ list, extending the tables and building the chain of quantifier nodes the body
 sits under, so the formula decoder makes a single recursive call, on the body. -/
 
 /-- The tables extended by one binder, and the quantifier node it wraps a formula
-in. -/
+in.
+
+A `GTmodty` binder's interface is looked up in `F.modTypes` by the name its
+`ModuleType` node carries, and read from that node's own `sig` when the name is
+absent. The node carries the signature with the type's arguments substituted in,
+so the second route also serves a binder at a parameterised module type, whose
+declaration `decodeModTypeInterface` rejects and which therefore never enters the
+table. -/
 def bindBinder (F : FormTables) (q : String) (b : Json) :
     Except String (FormTables × (EcForm → EcForm)) := do
   let nm ← getStr b "name"
@@ -861,25 +1385,27 @@ def bindBinder (F : FormTables) (q : String) (b : Json) :
   | "GTmodty" =>
     let mtJ ← getObj g "modtype"
     let mtName ← getStr mtJ "name"
-    match List.lookup mtName F.modTypes with
-    | none =>
-      fail s!"the module type '{mtName}' is not in the ingestion's module-type \
-        table, so the binder has no interface"
-    | some I =>
-      if q = "Lforall" then
-        let gs ← restrGlobals F g
-        let F' := F.bindModBinder st nm I
-        match gs with
-        | none =>
-          .ok (F', fun body =>
-            if body.namesGlobOf nm then .allModOn nm I body else .allMod nm I body)
-        | some gs =>
-          .ok (F', fun body =>
-            if body.namesGlobOf nm then .allModRestrOn nm I gs body
-            else .allModRestr nm I gs body)
-      else
-        fail s!"the module binder '{nm}' under '{q}': EcForm quantifies a module \
-          universally only"
+    let I ←
+      match List.lookup mtName F.modTypes with
+      | some I => Except.ok I
+      | none =>
+        (decodeModTypeSig F.tables mtJ).mapError (fun m =>
+          s!"the module type '{mtName}' is not in the ingestion's module-type \
+            table, and its own signature does not decode: {m}")
+    if q = "Lforall" then
+      let gs ← restrGlobals F g
+      let F' := F.bindModBinder st nm I
+      match gs with
+      | none =>
+        .ok (F', fun body =>
+          if body.namesGlobOf nm then .allModOn nm I body else .allMod nm I body)
+      | some gs =>
+        .ok (F', fun body =>
+          if body.namesGlobOf nm then .allModRestrOn nm I gs body
+          else .allModRestr nm I gs body)
+    else
+      fail s!"the module binder '{nm}' under '{q}': EcForm quantifies a module \
+        universally only"
   | k => fail s!"unknown binder sort '{k}' in {g.compress}"
 
 /-- The tables extended by every binder of a quantifier node, and the chain of
@@ -949,9 +1475,10 @@ def decodeHoareCmp (s : String) : Except String EcCmp :=
   | "FHge" => .ok .ge
   | k => fail s!"unknown Hoare comparison '{k}'"
 
-/-- The value a real literal denotes. A bound in the fragment is a closed
-constant, and `from_int` of a non-negative integer is its only shape. -/
-def decodeRealLit (F : FormTables) (j : Json) : Except String ℝ≥0∞ := do
+/-- The real literal a bound node carries. A bound in the fragment is a closed
+constant, and `from_int` of a non-negative integer is its only shape, so the
+numeral the node applies `from_int` to is the whole of the literal. -/
+def decodeRealLit (F : FormTables) (j : Json) : Except String EcRealLit := do
   let p ← appHeadPath j
   if p ≠ F.paths.realFromInt then
     fail s!"the real literal '{p}' in {j.compress}: the fragment has the \
@@ -966,7 +1493,7 @@ def decodeRealLit (F : FormTables) (j : Json) : Except String ℝ≥0∞ := do
       else
         let v ← getStr n "value"
         match v.toNat? with
-        | some m => .ok (m : ℝ≥0∞)
+        | some m => .ok ⟨m⟩
         | none =>
           fail s!"the integer literal '{v}' is not a non-negative decimal, and a \
             negative bound has no image in ℝ≥0∞"
@@ -1224,7 +1751,22 @@ def decodeForm (F : FormTables) (j : Json) : Except String EcForm :=
         match _hfa : getArr j "args" with
         | .error e => .error e
         | .ok arr =>
-          if p = F.paths.realLe || p = F.paths.realLt then
+          if p = F.paths.losslessOp then
+            match arr.toList with
+            | [x] =>
+              match decodeTyField F.tables x "ty" with
+              | .error e => .error e
+              | .ok dty =>
+                match dty with
+                | .distr u =>
+                  match decodeTerm F (.distr u) x with
+                  | .error e => .error e
+                  | .ok d => .ok (.isLossless d)
+                | _ =>
+                  fail s!"'{p}' applied to a term of type {repr dty}: total mass \
+                    is asserted of a distribution"
+            | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+          else if p = F.paths.realLe || p = F.paths.realLt then
             match arr.toList.attach with
             | [⟨x, _⟩, ⟨y, _⟩] =>
               match decodeProb F x with
@@ -1487,10 +2029,97 @@ decreasing_by
 
 end
 
-/-! ## Lemmas -/
+/-! ## Type parameters
 
-/-- Decode a `Th_axiom` item's statement. -/
-def decodeAxiom (F : FormTables) (j : Json) : Except String EcForm := do
+A statement the source writes `lemma l ['a] : φ` is polymorphic: its `tparams`
+name the type variables `φ` may read, and every type position of `φ` naming one
+carries a `Tvar` node. `EcTy` is a closed universe of codes, so a type variable
+names no code and `decodeTy` has no arm for a `Tvar` node. What a type parameter
+gets instead is a **reserved type path**, one per parameter: the parameter's
+occurrences are rewritten to the nullary type constructor at that path, and the
+path is entered in the ingestion's type table at the code the parameter is read
+at. A `Tvar` therefore resolves the way every other type resolves, through
+`DecodeTables.tyPaths`, and the code a statement is decoded at is a parameter of
+the decode rather than a table the type decoder has to grow.
+
+Occurrences resolve **by name**. The exporter writes a type parameter as a bare
+name (`EcIdent.name`) in `tparams` while a `Tvar` node carries the name and a
+uniqueness stamp, so the stamp has no counterpart on the binder side to match
+against; what the stamp is used for here is a consistency check, since a name
+carrying two stamps in one statement would mean two binders a name-keyed
+substitution would conflate. `decodeAxiomAt` rejects that, and rejects an
+occurrence of a name the statement does not declare.
+
+The reserved path is `#tyvar.` before the parameter's source name. An EasyCrypt
+path is a dot-separated sequence of identifiers and no identifier starts with
+`#`, so no source path collides with it. -/
+
+/-- The type path a statement's type parameter is read at. -/
+def tyParamPath (x : String) : String := "#tyvar." ++ x
+
+/-- The code a type parameter with no assignment is read at: the opaque code of
+its reserved path, which is the image of a type the source says nothing about
+(`Ty.lean` fixes its carrier). A statement decoded at these codes is the source
+statement at one abstract type per parameter, which is a consequence of the
+source's and not the whole of it; the quantified reading is `EcPolyForm` together
+with `FormToProp.importedPropPoly`. -/
+def tyParamOpaque (x : String) : EcTy := .opaque (tyParamPath x)
+
+/-- The nullary type constructor a type parameter's occurrences are rewritten
+to. -/
+def tyParamNode (x : String) : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str (tyParamPath x)),
+    ("args", Json.arr #[])]
+
+/-- The depth the type-parameter rewriting descends to. A `Tvar` below it is left
+in place and `decodeTy` rejects it, so an exhausted bound is a decode failure and
+never a silent rewriting. -/
+def tyParamDepth : Nat := 256
+
+/-- The source name and uniqueness stamp of a node, when the node is a type
+variable. -/
+def tyVarIdentOf (j : Json) : Option (String × Nat) :=
+  match j.getObjValAs? String "kind" with
+  | .ok "Tvar" =>
+    match j.getObjValAs? String "name", j.getObjValAs? Nat "stamp" with
+    | .ok nm, .ok st => some (nm, st)
+    | _, _ => none
+  | _ => none
+
+/-- The type-variable occurrences of a node to the depth `fuel`, in occurrence
+order, with repetitions. -/
+def tyVarIdents : Nat → Json → List (String × Nat)
+  | 0, _ => []
+  | fuel + 1, j =>
+    match j with
+    | .arr as => (as.toList.map (tyVarIdents fuel)).flatten
+    | .obj m =>
+      match tyVarIdentOf j with
+      | some p => [p]
+      | none => (m.toList.map (fun kv => tyVarIdents fuel kv.2)).flatten
+    | _ => []
+
+/-- The node with every type-variable occurrence of a parameter of `xs` rewritten
+to the nullary type constructor at the parameter's reserved path, to the depth
+`fuel`. -/
+def substTyParams (xs : List String) : Nat → Json → Json
+  | 0, j => j
+  | fuel + 1, j =>
+    match j with
+    | .arr as => .arr (as.map (substTyParams xs fuel))
+    | .obj m =>
+      match tyVarIdentOf j with
+      | some (nm, _) => if xs.contains nm then tyParamNode nm else j
+      | none => Json.mkObj (m.toList.map (fun kv => (kv.1, substTyParams xs fuel kv.2)))
+    | _ => j
+
+/-- Extend the tables with a statement's type parameter, read at the code `t`. -/
+def FormTables.withTyParam (F : FormTables) (x : String) (t : EcTy) : FormTables :=
+  { F with tables := F.tables.withAliasType (tyParamPath x) t }
+
+/-- The name a `Th_axiom` item declares, and the type parameters it binds, in the
+order the source declares them. -/
+def axiomTyParams (j : Json) : Except String (String × List String) := do
   let kind ← getStr j "kind"
   if kind ≠ "Th_axiom" then
     fail s!"theory item of kind '{kind}': only Th_axiom carries a statement"
@@ -1498,12 +2127,164 @@ def decodeAxiom (F : FormTables) (j : Json) : Except String EcForm := do
     let name ← getStr j "name"
     let decl ← getObj j "decl"
     let tparams ← getArr decl "tparams"
-    if !tparams.isEmpty then
-      fail s!"the statement '{name}' has {tparams.size} type parameters, and \
-        EcForm has no type quantifier"
-    else
-      let spec ← getObj decl "spec"
-      decodeForm F spec
+    let xs ← tparams.toList.mapM (fun x =>
+      match x with
+      | .str s => .ok s
+      | _ =>
+        fail s!"the type parameter {x.compress} of '{name}' is not a name")
+    .ok (name, xs)
+
+/-! ## Lemmas -/
+
+/-- Decode a `Th_axiom` item's statement at the codes `ts` its type parameters
+are read at, in the order the source declares them. -/
+def decodeAxiomAt (F : FormTables) (ts : List EcTy) (j : Json) : Except String EcForm := do
+  let (name, xs) ← axiomTyParams j
+  if ts.length ≠ xs.length then
+    fail s!"the statement '{name}' has {xs.length} type parameters and \
+      {ts.length} codes to read them at"
+  else
+    let decl ← getObj j "decl"
+    let spec ← getObj decl "spec"
+    let occ := tyVarIdents tyParamDepth spec
+    match occ.find? (fun p => !xs.contains p.1) with
+    | some p =>
+      fail s!"the statement '{name}' reads the type variable '{p.1}', which is \
+        not one of its type parameters"
+    | none =>
+      match occ.find? (fun p => occ.any (fun q => q.1 == p.1 && q.2 != p.2)) with
+      | some p =>
+        fail s!"the type variable '{p.1}' of '{name}' carries two uniqueness \
+          stamps: a type variable read without its stamp aliases distinct \
+          binders of the same source name"
+      | none =>
+        let F' := (xs.zip ts).foldl (fun G p => G.withTyParam p.1 p.2) F
+        decodeForm F' (substTyParams xs tyParamDepth spec)
+
+/-- Decode a `Th_axiom` item's statement, each type parameter read at the opaque
+code of its reserved path. -/
+def decodeAxiom (F : FormTables) (j : Json) : Except String EcForm := do
+  let (_, xs) ← axiomTyParams j
+  decodeAxiomAt F (xs.map tyParamOpaque) j
+
+/-! ### The imported axioms a lemma is stated under
+
+An EasyCrypt proof of a lemma runs in the environment of the theory holding the
+lemma and of every theory enclosing it, so the imported form of an
+`axiom_kind: Lemma` item is its statement under the `axiom_kind: Axiom` items of
+those scopes. The scope is read off the path: the exporter fully qualifies every
+path, so the items of the theory at `Top.A.B` are the paths `Top.A.B.x`, and an
+axiom at `q` is in scope for a statement at `p` exactly when `q`'s scope is a
+prefix of `p`'s.
+
+The scope is the enclosing theory **and its ancestors**, not the enclosing theory
+alone. In `crypto__DigitalSignaturesROM.eca` the theory
+`Top.StatelessROM.UUFKOAROM.UUFKOA` holds the lemma `dmsg_ll` and declares no
+axiom of its own, while the axiom that lemma is proved from — `is_lossless dmsg`
+— is declared one scope out, in `Top.StatelessROM.UUFKOAROM`. Reading the
+enclosing theory alone drops it, and a goal missing a premise is a stronger claim
+than the source's.
+
+An axiom of the scope that does not decode rejects the lemma, naming the axiom.
+Dropping it produces a goal stronger than the source lemma, and nothing
+downstream distinguishes that goal from the source's own statement; the only
+`EcForm` standing for an unknown premise is `EcForm.tru`, which is the same
+drop. -/
+
+/-- The `Th_axiom` items of one envelope item, in declaration order: the item
+itself, or, for a `Th_theory` item, the statements among its items, theory-inner
+theories included. An inner item's path is already fully qualified, so the
+collection is flat. -/
+def thAxiomItems (j : Json) : List Json :=
+  match getStr j "kind" with
+  | .ok "Th_axiom" => [j]
+  | .ok "Th_theory" =>
+    match _hitems : getArr j "items" with
+    | .ok arr => (arr.toList.attach.map (fun ⟨x, _⟩ => thAxiomItems x)).flatten
+    | .error _ => []
+  | _ => []
+termination_by jsonSize j
+decreasing_by
+  exact getArr_decreases _hitems (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
+
+/-- The path an envelope item declares, and the empty string for an item without
+one. -/
+def itemPath (j : Json) : String := (getStrOpt j "path").getD ""
+
+/-- The scope a fully qualified path is declared in: its components with the
+declared name dropped. -/
+def pathScope (p : String) : List String := (p.splitOn ".").dropLast
+
+/-- The `axiom_kind` an item's declaration carries. -/
+def itemAxiomKind (j : Json) : Option String :=
+  match getObj j "decl" with
+  | .ok d => getStrOpt d "axiom_kind"
+  | .error _ => none
+
+/-- The imported axioms in scope at the statement at `path`, outermost scope
+first: every `axiom_kind: Axiom` item of `items` declared in a scope enclosing
+`path`, ordered by the depth of that scope. -/
+def scopeAxiomItems (items : List Json) (path : String) : List Json :=
+  let inScope := (items.flatMap thAxiomItems).filter (fun it =>
+    itemAxiomKind it == some "Axiom" && itemPath it != "" && itemPath it != path
+      && (pathScope (itemPath it)).isPrefixOf (pathScope path))
+  let depth : Json → Nat := fun it => (pathScope (itemPath it)).length
+  (List.range ((inScope.map depth).foldl max 0 + 1)).flatMap
+    (fun d => inScope.filter (fun it => depth it == d))
+
+/-- The `Th_axiom` item at `path`, or an error naming the path. -/
+def findAxiomItem (items : List Json) (path : String) : Except String Json :=
+  match (items.flatMap thAxiomItems).find? (fun it => itemPath it == path) with
+  | some it => .ok it
+  | none => fail s!"the export declares no Th_axiom item at path '{path}'"
+
+/-- Decode an imported axiom of the scope of `path`, reporting its failure as a
+failure of the statement it would be a premise of. -/
+def decodeScopeAxiom (F : FormTables) (path : String) (ax : Json) :
+    Except String EcForm :=
+  match axiomTyParams ax with
+  | .ok (_, _ :: _) =>
+    fail s!"the statement '{path}' is stated under the imported axiom \
+      '{itemPath ax}', which binds type parameters: a premise is an EcForm and \
+      the type binders are outside it, so the premise has nowhere to bind them"
+  | _ =>
+    match decodeAxiom F ax with
+    | .ok f => .ok f
+    | .error m =>
+      fail s!"the statement '{path}' is stated under the imported axiom \
+        '{itemPath ax}', which does not decode: {m}"
+
+/-- Decode the `axiom_kind: Lemma` item at `path` as the statement its theory
+proves: its own statement under the imported axioms of its scope, closed over the
+abstract operators all of them read (`EcForm.assembleStatement`). The scope is
+`F.scopeItems`.
+
+The type parameters of the lemma are read at the codes `ts`, in the order the
+source declares them. A premise binds no type parameter of its own, so a
+polymorphic imported axiom of the scope rejects the lemma (`decodeScopeAxiom`).
+
+An `axiom_kind: Axiom` item is refused. Such an item is a hypothesis of its
+theory, read at a realization (`importedPropWithOps`), and stating it under
+itself holds of every realization, which is not what the source asserts. -/
+def decodeLemmaAtTys (F : FormTables) (ts : List EcTy) (path : String) :
+    Except String EcForm := do
+  let it ← findAxiomItem F.scopeItems path
+  let decl ← getObj it "decl"
+  let kind ← getStr decl "axiom_kind"
+  if kind ≠ "Lemma" then
+    fail s!"the statement '{path}' has axiom_kind '{kind}': an imported axiom is \
+      a hypothesis of its theory and not a goal of it"
+  else
+    let goal ← decodeAxiomAt F ts it
+    let hyps ← (scopeAxiomItems F.scopeItems path).mapM (decodeScopeAxiom F path)
+    .ok (EcForm.assembleStatement hyps goal)
+
+/-- The statement of the lemma at `path` with each of its type parameters read at
+the opaque code of that parameter's reserved path. -/
+def decodeLemmaAt (F : FormTables) (path : String) : Except String EcForm := do
+  let it ← findAxiomItem F.scopeItems path
+  let (_, xs) ← axiomTyParams it
+  decodeLemmaAtTys F (xs.map tyParamOpaque) path
 
 /-- The signature of each procedure of a decoded module, keyed by the path the
 exporter names it by at a judgement or probability site. -/
@@ -1515,6 +2296,22 @@ def importAxiom (F : FormTables) (name : String) (j : Json) : Except String EcFo
   let e ← decodeEnvelope j
   let it ← findItem e name
   decodeAxiom F it
+
+/-- Decode the statement of the lemma `name` from an exporter envelope, at the
+codes `ts` its type parameters are read at. -/
+def importAxiomAt (F : FormTables) (ts : List EcTy) (name : String) (j : Json) :
+    Except String EcForm := do
+  let e ← decodeEnvelope j
+  let it ← findItem e name
+  decodeAxiomAt F ts it
+
+/-- Decode the lemma at `path` from an exporter envelope, under the imported
+axioms of its scope. The envelope's items are the scope the walk reads, so a
+lemma of a theory-inner theory resolves at its full path. -/
+def importLemma (F : FormTables) (path : String) (j : Json) :
+    Except String EcForm := do
+  let e ← decodeEnvelope j
+  decodeLemmaAt { F with scopeItems := e.items } path
 
 /-! ## Golden tests
 
@@ -1632,9 +2429,11 @@ private def formsStatement (name : String) : Except String EcForm := do
         | _ => false)
 
 -- `forall (A <: Adv) &m, (glob A){m} = (glob A){m}`: the module type `Adv` is
--- not in this fixture's module-type table, so the binder has no interface.
+-- in no module-type table this fixture builds, and the binder's interface is the
+-- one its `ModuleType` node's own signature declares.
 #guard (match formsStatement "glob_refl" with
-        | .error _ => true
+        | .ok (.allModOn "A" I (.allMem "&m" (.memEqOnMod "A" _ _))) =>
+          I.names == ["guess"]
         | _ => false)
 
 -- A judgement over a procedure outside the accepted program fragment has no
@@ -1740,18 +2539,17 @@ def hoareStatement (name : String) : Except String EcForm := do
         | _ => false)
 
 -- `phoare [Coin.toss : true ==> true] = 1%r` decodes to a bounded Hoare judgement
--- at `EcCmp.eq`. The bound is left open in this pattern and the two below because
--- `ℝ≥0∞` has no computable equality, as in the `otp_pr_diff` guard of
--- `Examples/OTPEquivImport.lean`: these guards pin the shape of the statement and
--- the comparison, and not the value of the constant.
+-- at `EcCmp.eq` and the bound `1`. This pattern and the two below pin the value of
+-- the bound as well as the shape of the statement, since `EcRealLit` carries the
+-- numeral the decoder read.
 #guard (match hoareStatement "toss_lossless" with
-        | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) .tru .tru .eq _) => true
+        | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)) => true
         | _ => false)
 
 -- `phoare [Coin.toss : Coin.b = false ==> res] <= 1%r` decodes at `EcCmp.le`.
 #guard (match hoareStatement "toss_le" with
         | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) (.eqT a b)
-                 (.holds (.res .bool .cur)) .le _) =>
+                 (.holds (.res .bool .cur)) EcCmp.le (EcRealLit.mk 1)) =>
           isGlobReadAt a "Top.Coin./b" 0 (.side .cur) && isBoolLit b false
         | _ => false)
 
@@ -1759,7 +2557,7 @@ def hoareStatement (name : String) : Except String EcForm := do
 -- `EcCmp.ge`.
 #guard (match hoareStatement "toss_ge" with
         | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) .tru
-                 (.and (.holds (.res .bool .cur)) (.eqT a b)) .ge _) =>
+                 (.and (.holds (.res .bool .cur)) (.eqT a b)) EcCmp.ge (EcRealLit.mk 0)) =>
           isGlobReadAt a "Top.Coin./b" 0 (.side .cur) && isBoolLit b true
         | _ => false)
 
@@ -1804,7 +2602,7 @@ def intsFormStatement (name : String) : Except String EcForm := do
                 (.probCmp .le
                   (.pr "Top.Counter./main" ⟨.unit, .int⟩ (.lit ()) (.named "&m")
                      (.eqT (.res .int .cur) z))
-                  (.const _))) => isIntLit z 0
+                  (EcProb.const (EcRealLit.mk 1)))) => isIntLit z 0
         | _ => false)
 
 /-- The tables with no procedure and no binder, for the nodes below, which no
@@ -1864,7 +2662,7 @@ private def jRealZero : Json :=
 
 -- A real literal decodes to a constant probability.
 #guard (match decodeProb bareTables jRealZero with
-        | .ok (.const _) => true
+        | .ok (EcProb.const (EcRealLit.mk 0)) => true
         | _ => false)
 
 -- A signed difference of two probabilities is rejected: `ℝ≥0∞` subtraction is
@@ -1880,7 +2678,7 @@ private def jRealZero : Json :=
             (jRealApp "Top.Real.`|_|"
               #[jRealApp "Top.CoreReal.add"
                   #[jRealZero, jRealApp "Top.CoreReal.opp" #[jRealZero]]]) with
-        | .ok (.absDiff (.const _) (.const _)) => true
+        | .ok (.absDiff (EcProb.const (EcRealLit.mk 0)) (EcProb.const (EcRealLit.mk 0))) => true
         | _ => false)
 
 -- A quotient is rejected.
@@ -1927,19 +2725,109 @@ private def jFormInt : Json :=
         | .error _ => true
         | _ => false)
 
--- Integer arithmetic in a term is rejected: `EcTerm` has no integer operator.
+/-- A nullary operator read, at the type node `ty`. -/
+private def jFormNullary (ty : Json) (p : String) : Json :=
+  Json.mkObj [("ty", ty), ("kind", Json.str "Fop"), ("path", Json.str p),
+              ("targs", Json.arr #[])]
+
+/-- The type node of `int option`. -/
+private def jFormIntOption : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str "Top.Logic.option"),
+              ("args", Json.arr #[jFormInt])]
+
+/-- The type node of `int list`. -/
+private def jFormIntList : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str "Top.List.list"),
+              ("args", Json.arr #[jFormInt])]
+
+-- The canonical nullary values read in a term at the codes that have one, at the
+-- same value the expression layer gives the same path.
+#guard (match decodeTerm bareTables (.option .int)
+            (jFormNullary jFormIntOption "Top.Logic.None") with
+        | .ok (.lit v) => v == EcTy.noneVal (a := .int)
+        | _ => false)
+#guard (match decodeTerm bareTables (.list .int)
+            (jFormNullary jFormIntList "Top.List.[]") with
+        | .ok (.lit v) => v == EcTy.listEmpty (a := .int)
+        | _ => false)
+
+-- A code with no such value is rejected, rather than given the canonical
+-- inhabitant of whatever code the context asks for. The node's own type says
+-- `int`, so this is the read the type checker admits.
 #guard (match decodeTerm bareTables .int
-            (Json.mkObj
-              [("ty", jFormInt), ("kind", Json.str "Fapp"),
-               ("f", Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fop"),
-                                 ("path", Json.str "Top.CoreInt.add"),
-                                 ("targs", Json.arr #[])]),
-               ("args", Json.arr
-                 #[Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"),
-                               ("value", Json.str "1")],
-                   Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"),
-                               ("value", Json.str "2")]])]) with
-        | .error _ => true
+            (jFormNullary jFormInt "Top.Logic.None") with
+        | .error m => m.startsWith "ec-import: 'Top.Logic.None' at type"
+        | _ => false)
+
+-- `witness` is the canonical inhabitant at any code, the reading `oget` takes.
+#guard (match decodeTerm bareTables .int
+            (jFormNullary jFormInt "Top.Pervasive.witness") with
+        | .ok (.lit v) => v == (default : EcTy.int.interp)
+        | _ => false)
+
+/-- An integer literal node at the `int` code. -/
+private def jFormIntLit (v : String) : Json :=
+  Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"), ("value", Json.str v)]
+
+/-- An application of the integer operator `p` at the result type node `res`. -/
+private def jFormIntApp (res : Json) (p : String) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fop"),
+                       ("path", Json.str p), ("targs", Json.arr #[])]),
+     ("args", Json.arr args)]
+
+-- Integer addition in a term decodes at the `int` code.
+#guard (match decodeTerm bareTables .int
+            (jFormIntApp jFormInt "Top.CoreInt.add"
+              #[jFormIntLit "1", jFormIntLit "2"]) with
+        | .ok (.intAdd a b) => isIntLit a 1 && isIntLit b 2
+        | _ => false)
+
+-- Multiplication and negation decode at the `int` code.
+#guard (match decodeTerm bareTables .int
+            (jFormIntApp jFormInt "Top.CoreInt.mul"
+              #[jFormIntLit "1", jFormIntLit "2"]) with
+        | .ok (.intMul a b) => isIntLit a 1 && isIntLit b 2
+        | _ => false)
+#guard (match decodeTerm bareTables .int
+            (jFormIntApp jFormInt "Top.CoreInt.opp" #[jFormIntLit "3"]) with
+        | .ok (.intOpp a) => isIntLit a 3
+        | _ => false)
+
+/-- The type node `int * int`, which is what `edivz` returns. -/
+private def jFormIntPair : Json :=
+  Json.mkObj [("kind", Json.str "Ttuple"),
+              ("args", Json.arr #[jFormInt, jFormInt])]
+
+-- `edivz` decodes at the pair code, which `%/` and `%%` project out of.
+#guard (match decodeTerm bareTables (.prod .int .int)
+            (jFormIntApp jFormIntPair "Top.IntDiv.edivz"
+              #[jFormIntLit "7", jFormIntLit "2"]) with
+        | .ok (.intEdivz a b) => isIntLit a 7 && isIntLit b 2
+        | _ => false)
+
+-- Euclidean division is what `edivz` denotes: the remainder is non-negative
+-- whatever the signs, and a zero divisor gives the quotient zero and the
+-- dividend as remainder, which is EasyCrypt's `edivn m 0 = (0, m)`.
+#guard (Int.ediv (-7) 2, Int.emod (-7) 2) == ((-4 : Int), (1 : Int))
+#guard (Int.ediv (-7) (-2), Int.emod (-7) (-2)) == ((4 : Int), (1 : Int))
+#guard (Int.ediv 5 0, Int.emod 5 0) == ((0 : Int), (5 : Int))
+
+-- The order comparison decodes at the `bool` code.
+#guard (match decodeTerm bareTables .bool
+            (jFormIntApp jFormBool "Top.CoreInt.le"
+              #[jFormIntLit "1", jFormIntLit "2"]) with
+        | .ok (.intLe a b) => isIntLit a 1 && isIntLit b 2
+        | _ => false)
+
+-- The strict order has no constructor of its own: it decodes as the negation of
+-- the reversed comparison, the shape `EcExpr.ltGuard` reads back at the
+-- expression layer.
+#guard (match decodeTerm bareTables .bool
+            (jFormIntApp jFormBool "Top.CoreInt.lt"
+              #[jFormIntLit "1", jFormIntLit "2"]) with
+        | .ok (.bnot (.intLe a b)) => isIntLit a 2 && isIntLit b 1
         | _ => false)
 
 -- A node the exporter marked as outside its coverage is rejected.
@@ -1948,6 +2836,1092 @@ private def jFormInt : Json :=
                          ("what", Json.str "Fmatch"),
                          ("pp", Json.str "match o with")]) with
         | .error _ => true
+        | _ => false)
+
+/-! ### An abstract operator read by a statement
+
+The items below are the exported shapes of `crypto/PRF.eca`'s inner theory
+`PseudoRF`, transcribed from an envelope of schema version 8:
+
+```
+type K.
+op dK : K distr.
+axiom dK_ll : is_lossless dK.
+```
+
+`dK` is a declaration, so the statement that reads it is a statement about every
+realization of it: `decodeAxiom` produces the body, and `EcForm.assembleParams`
+closes it under one binder — `EcForm.allConst` at the declared type, since the
+declaration takes no argument. The read is matched with `EcTerm.opAppOf` rather
+than by a pattern, because `EcTerm.opApp` is indexed by `s.res`, a projection out
+of its own field. -/
+
+/-- The type node of `PseudoRF`'s carrier. -/
+private def jPRFK : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.PseudoRF.K"), ("args", Json.arr #[])]
+
+/-- The type node of `K distr`. -/
+private def jPRFDistrK : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Distr.distr"), ("args", Json.arr #[jPRFK])]
+
+/-- The `Th_theory` item holding `PseudoRF`'s carrier and its abstract
+distribution. -/
+private def jPRFDecls : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_theory"), ("name", Json.str "PseudoRF"),
+     ("path", Json.str "Top.PseudoRF"), ("mode", Json.str "abstract"),
+     ("source", Json.null),
+     ("items", Json.arr
+       #[jAbsTypeDecl "K" "Top.PseudoRF.K",
+         Json.mkObj
+           [("kind", Json.str "Th_operator"), ("name", Json.str "dK"),
+            ("path", Json.str "Top.PseudoRF.dK"),
+            ("decl", Json.mkObj
+              [("tparams", Json.arr #[]), ("ty", jPRFDistrK),
+               ("body", Json.mkObj [("kind", Json.str "Abstract")])])]])]
+
+/-- The `Th_axiom` item of `axiom dK_ll : is_lossless dK.` -/
+private def jPRFDKLL : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_axiom"), ("name", Json.str "dK_ll"),
+     ("path", Json.str "Top.PseudoRF.dK_ll"),
+     ("decl", Json.mkObj
+       [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Axiom"),
+        ("spec", Json.mkObj
+          [("ty", jFormBool), ("kind", Json.str "Fapp"),
+           ("f", Json.mkObj
+             [("ty", Json.mkObj
+                [("kind", Json.str "Tfun"), ("dom", jPRFDistrK),
+                 ("cod", jFormBool)]),
+              ("kind", Json.str "Fop"),
+              ("path", Json.str "Top.Distr.is_lossless"),
+              ("targs", Json.arr #[jPRFK])]),
+           ("args", Json.arr
+             #[Json.mkObj
+                 [("ty", jPRFDistrK), ("kind", Json.str "Fop"),
+                  ("path", Json.str "Top.PseudoRF.dK"),
+                  ("targs", Json.arr #[])]])])])]
+
+/-- The tables `PseudoRF`'s statements decode against: its carrier at the opaque
+code, then its abstract operators. -/
+private def prfFormTables : FormTables :=
+  formTables
+    (registerThOperators (registerThTypes ecPrelude [jPRFDecls]) [jPRFDecls]) []
+
+/-- The signature `dK`'s declaration gives it. -/
+private def dKSig : EcSig := ⟨.unit, .distr (.opaque "Top.PseudoRF.K")⟩
+
+-- `is_lossless dK` decodes to the losslessness assertion over the operator read
+-- at the signature its declaration gives it.
+#guard (match decodeAxiom prfFormTables jPRFDKLL with
+        | .ok (.isLossless d) => d.opAppOf == some ("Top.PseudoRF.dK", dKSig)
+        | _ => false)
+
+-- The statement reads one operator and binds none, so assembling it binds that
+-- one, and the assembled statement reads no free operator.
+#guard (match decodeAxiom prfFormTables jPRFDKLL with
+        | .ok f => EcForm.opsOf f == [("Top.PseudoRF.dK", dKSig)]
+        | _ => false)
+
+#guard (match decodeAxiom prfFormTables jPRFDKLL with
+        | .ok f =>
+          (match f.assembleParams with
+           | .allConst "Top.PseudoRF.dK" t (.isLossless d) =>
+               t == EcTy.distr (EcTy.opaque "Top.PseudoRF.K")
+                 && d.opAppOf == some ("Top.PseudoRF.dK", dKSig)
+           | _ => false)
+            && EcForm.opsOf f.assembleParams == []
+        | _ => false)
+
+-- Without the operator declaration the same statement is rejected: the path is in
+-- no table, so the read has no image and cannot default to one.
+#guard (match decodeAxiom (formTables (registerThTypes ecPrelude [jPRFDecls]) [])
+            jPRFDKLL with
+        | .error m => m.startsWith "ec-import: unknown nullary operator path"
+        | _ => false)
+
+/-! ### An applied abstract operator
+
+The items below are the exported shapes of two corpus statements over
+arrow-typed abstract operators, transcribed from envelopes of schema version 8.
+`crypto/PRF.eca`'s inner theory `RF` declares one argument:
+
+```
+type D.
+type R.
+
+abstract theory RF.
+  op dR : D -> R distr.
+  axiom dR_ll : forall x, is_lossless (dR x).
+end RF.
+```
+
+and `crypto/assumptions/AEAD.ec` declares three:
+
+```
+type K, AData, Msg, Cph.
+op enc : K -> AData -> Msg -> Cph distr.
+axiom enc_ll : forall k a m, is_lossless (enc k a m).
+```
+
+A declaration of `n` arguments is registered at the signature whose argument code
+is those arguments' codes as a right-nested product, and a read of it decodes to
+`EcTerm.opApp` at that signature, applied to the arguments in the same nesting
+(`EcTerm.nestArgs`). The argument count comes from the application and the
+argument codes from the declaration, so an application whose arguments do not
+nest into the declared argument code is rejected naming both codes. Assembling
+binds such a declaration with `EcForm.allOp`, the binder of a declaration whose
+realization is a function. -/
+
+/-- The type node of the argument-free type declared at `path`. -/
+private def jTyNode (path : String) : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str path),
+              ("args", Json.arr #[])]
+
+/-- The type node of the distributions over the type declared at `path`. -/
+private def jDistrNode (path : String) : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Distr.distr"),
+              ("args", Json.arr #[jTyNode path])]
+
+/-- The binder of the logical variable `name` at the stamp `st`, ranging over the
+type declared at `path`. -/
+private def jTyBinder (name : String) (st : Nat) (path : String) : Json :=
+  Json.mkObj
+    [("name", Json.str name), ("stamp", Json.num st),
+     ("gty", Json.mkObj
+       [("kind", Json.str "GTty"), ("ty", jTyNode path)])]
+
+/-- The read of the logical variable `name` at the stamp `st`, typed at the type
+declared at `path`. -/
+private def jLocalNode (name : String) (st : Nat) (path : String) : Json :=
+  Json.mkObj
+    [("ty", jTyNode path), ("kind", Json.str "Flocal"),
+     ("name", Json.str name), ("stamp", Json.num st)]
+
+/-- `is_lossless d` for a term `d` of the distributions over the type declared at
+`path`. -/
+private def jLosslessNode (path : String) (d : Json) : Json :=
+  Json.mkObj
+    [("ty", jFormBool), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jDistrNode path),
+           ("cod", jFormBool)]),
+        ("kind", Json.str "Fop"),
+        ("path", Json.str "Top.Distr.is_lossless"),
+        ("targs", Json.arr #[jTyNode path])]),
+     ("args", Json.arr #[d])]
+
+/-- The application of the operator at `path`, whose declared type is `fty`, to
+`args`, at the result type `resTy`. -/
+private def jOpAppNode (path : String) (fty resTy : Json) (args : Array Json) :
+    Json :=
+  Json.mkObj
+    [("ty", resTy), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", fty), ("kind", Json.str "Fop"), ("path", Json.str path),
+        ("targs", Json.arr #[])]),
+     ("args", Json.arr args)]
+
+/-- The `Th_axiom` item of `RF`'s `axiom dR_ll : forall x, is_lossless (dR x).` -/
+private def jRFDRLL : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_axiom"), ("name", Json.str "dR_ll"),
+     ("path", Json.str "Top.RF.dR_ll"),
+     ("decl", Json.mkObj
+       [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Axiom"),
+        ("spec", Json.mkObj
+          [("ty", jFormBool), ("kind", Json.str "Fquant"),
+           ("quant", Json.str "Lforall"),
+           ("binders", Json.arr #[jTyBinder "x" 95133 "Top.D"]),
+           ("body", jLosslessNode "Top.R"
+             (jOpAppNode "Top.RF.dR"
+               (jTyArrow (jTyNode "Top.D") (jDistrNode "Top.R"))
+               (jDistrNode "Top.R")
+               #[jLocalNode "x" 95133 "Top.D"]))])])]
+
+/-- The signature `dR`'s declaration gives it: one argument at the carrier `D`,
+the distributions over `R` as the result. -/
+private def dRSig : EcSig := ⟨.opaque "Top.D", .distr (.opaque "Top.R")⟩
+
+/-- The tables `RF`'s statement decodes against: the two carriers at the opaque
+codes, and `dR` at the signature its declared type gives it. -/
+private def rfFormTables : FormTables :=
+  formTables
+    ((registerThTypes ecPrelude
+        [jAbsTypeDecl "D" "Top.D", jAbsTypeDecl "R" "Top.R"]).withAbstractOp
+      "Top.RF.dR" dRSig) []
+
+-- The one argument is the quantified variable at its own code, so the read is an
+-- `opApp` at the declaration's signature under the quantifier.
+#guard (match decodeAxiom rfFormTables jRFDRLL with
+        | .ok (.allTy t "x" (.isLossless d)) =>
+            t == EcTy.opaque "Top.D"
+              && d.opAppOf == some ("Top.RF.dR", dRSig)
+        | _ => false)
+
+-- The statement reads the declaration and binds none, so assembling it binds
+-- that one with the signature binder, and reads no free operator.
+#guard (match decodeAxiom rfFormTables jRFDRLL with
+        | .ok f =>
+          (match f.assembleParams with
+           | .allOp "Top.RF.dR" s (.allTy _ "x" (.isLossless _)) => s == dRSig
+           | _ => false)
+            && EcForm.opsOf f.assembleParams == []
+        | _ => false)
+
+-- Without the declaration the same statement is rejected: the path is in no
+-- table, so the application has no image and cannot default to one.
+#guard (match decodeAxiom
+            (formTables (registerThTypes ecPrelude
+              [jAbsTypeDecl "D" "Top.D", jAbsTypeDecl "R" "Top.R"]) []) jRFDRLL with
+        | .error m => m.startsWith "ec-import: unknown operator path 'Top.RF.dR'"
+        | _ => false)
+
+/-- The `Th_axiom` item of `axiom enc_ll : forall k a m, is_lossless (enc k a m).` -/
+private def jAeadEncLL : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_axiom"), ("name", Json.str "enc_ll"),
+     ("path", Json.str "Top.enc_ll"),
+     ("decl", Json.mkObj
+       [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Axiom"),
+        ("spec", Json.mkObj
+          [("ty", jFormBool), ("kind", Json.str "Fquant"),
+           ("quant", Json.str "Lforall"),
+           ("binders", Json.arr
+             #[jTyBinder "k" 97692 "Top.K", jTyBinder "a" 97694 "Top.AData",
+               jTyBinder "m" 97696 "Top.Msg"]),
+           ("body", jLosslessNode "Top.Cph"
+             (jOpAppNode "Top.enc"
+               (jTyArrow (jTyNode "Top.K")
+                 (jTyArrow (jTyNode "Top.AData")
+                   (jTyArrow (jTyNode "Top.Msg") (jDistrNode "Top.Cph"))))
+               (jDistrNode "Top.Cph")
+               #[jLocalNode "k" 97692 "Top.K", jLocalNode "a" 97694 "Top.AData",
+                 jLocalNode "m" 97696 "Top.Msg"]))])])]
+
+/-- The `Th_type` items of the four carriers `enc` is declared over. -/
+private def jAeadCarriers : List Json :=
+  [jAbsTypeDecl "K" "Top.K", jAbsTypeDecl "AData" "Top.AData",
+   jAbsTypeDecl "Msg" "Top.Msg", jAbsTypeDecl "Cph" "Top.Cph"]
+
+/-- The signature `enc`'s declaration gives it: its three arguments as the
+right-nested product, the distributions over the ciphertexts as the result. -/
+private def encSig : EcSig :=
+  ⟨.prod (.opaque "Top.K") (.prod (.opaque "Top.AData") (.opaque "Top.Msg")),
+   .distr (.opaque "Top.Cph")⟩
+
+/-- The tables `AEAD.ec`'s statement decodes against: its four carriers at the
+opaque codes, and `enc` at the signature its declared type gives it. -/
+private def aeadFormTables : FormTables :=
+  formTables
+    ((registerThTypes ecPrelude jAeadCarriers).withAbstractOp "Top.enc" encSig) []
+
+-- The three arguments ride the declared argument code as the right-nested pair,
+-- so the read is one `opApp` at the declaration's signature.
+#guard (match decodeAxiom aeadFormTables jAeadEncLL with
+        | .ok (.allTy tk "k" (.allTy ta "a" (.allTy tm "m" (.isLossless d)))) =>
+            tk == EcTy.opaque "Top.K" && ta == EcTy.opaque "Top.AData"
+              && tm == EcTy.opaque "Top.Msg"
+              && d.opAppOf == some ("Top.enc", encSig)
+        | _ => false)
+
+-- Assembling binds the declaration at that signature, and the assembled
+-- statement reads no free operator.
+#guard (match decodeAxiom aeadFormTables jAeadEncLL with
+        | .ok f =>
+          (match f.assembleParams with
+           | .allOp "Top.enc" s (.allTy _ "k" (.allTy _ "a" (.allTy _ "m" _))) =>
+               s == encSig
+           | _ => false)
+            && EcForm.opsOf f.assembleParams == []
+        | _ => false)
+
+-- The application is read against the declared argument code: the same statement
+-- against a declaration of two arguments is rejected, since three arguments do
+-- not nest into a two-component product.
+#guard (match decodeAxiom
+            (formTables ((registerThTypes ecPrelude jAeadCarriers).withAbstractOp
+              "Top.enc" ⟨.prod (.opaque "Top.K") (.opaque "Top.AData"),
+                         .distr (.opaque "Top.Cph")⟩) []) jAeadEncLL with
+        | .error m =>
+            m.startsWith "ec-import: the abstract operator 'Top.enc' is declared at"
+        | _ => false)
+
+-- A declaration at another result code is rejected too, naming the code the
+-- context expects.
+#guard (match decodeAxiom
+            (formTables ((registerThTypes ecPrelude jAeadCarriers).withAbstractOp
+              "Top.enc" ⟨encSig.arg, .opaque "Top.Cph"⟩) []) jAeadEncLL with
+        | .error m =>
+            m.startsWith "ec-import: the abstract operator 'Top.enc' is declared at"
+        | _ => false)
+
+/-- The right-nested product an applied operator's arguments carry is the one a
+procedure's formals carry: the code `EcTerm.nestArgs` builds is `nestTuple` of
+the arguments' codes, which is the domain `decodeSigDef` gives a procedure of the
+same argument types. -/
+theorem nestArgs_fst (a : (t : EcTy) × EcTerm t)
+    (rest : List ((t : EcTy) × EcTerm t)) :
+    (EcTerm.nestArgs a rest).1 = nestTuple a.1 (rest.map Sigma.fst) := by
+  induction rest generalizing a with
+  | nil => rfl
+  | cons b rest ih => simp [EcTerm.nestArgs, nestTuple, ih]
+
+/-! ### A lemma stated under its theory's imported axiom
+
+The items below are the exported shapes of `crypto/DigitalSignaturesROM.eca`'s
+theory `Top.StatelessROM.UUFKOAROM`, transcribed from an envelope of schema
+version 8:
+
+```
+abstract theory UUFKOAROM.
+  op [lossless] dmsg : msg_t distr.
+  clone import UUFKOA with op dmsg <- dmsg
+  proof *.
+  realize dmsg_ll by exact: dmsg_ll.
+end UUFKOAROM.
+```
+
+`op [lossless] dmsg` declares the operator and the axiom `dmsg_ll` constraining
+it; the clone's own `dmsg_ll` is realized, so the export carries it as
+`axiom_kind: Lemma` one scope in, at
+`Top.StatelessROM.UUFKOAROM.UUFKOA.dmsg_ll`. The lemma's own theory declares no
+axiom, so this is the pair that fixes the scope rule: the premise the lemma is
+proved from is declared in the enclosing theory.
+
+The declared type of `dmsg` is at `Top.Pervasive.distr`, EasyCrypt's declaration
+of `'a distr`; `Top.Distr.distr`, the path `ecPrelude` carries, is the alias
+`Distr.ec` defines for it. The export writes both — the operator's declared type
+at the declaration path, the argument type of `is_lossless` in the lemma at the
+alias — so the tables below register the declaration path alongside it. -/
+
+/-- The type node of `msg_t`, the carrier the messages are drawn from. -/
+private def jMsgTy : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str "Top.msg_t"),
+              ("args", Json.arr #[])]
+
+/-- The type node of `msg_t distr` at EasyCrypt's declaration of `'a distr`. -/
+private def jMsgDistrTy : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Pervasive.distr"),
+              ("args", Json.arr #[jMsgTy])]
+
+/-- The type node of `msg_t distr` at `Distr.ec`'s alias. -/
+private def jMsgDistrTyAlias : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Distr.distr"),
+              ("args", Json.arr #[jMsgTy])]
+
+/-- The `Th_type` item of `type msg_t.` -/
+private def jMsgT : Json := jAbsTypeDecl "msg_t" "Top.msg_t"
+
+/-- The `Th_operator` item of `op dmsg : msg_t distr.` -/
+private def jDmsg : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_operator"), ("name", Json.str "dmsg"),
+     ("path", Json.str "Top.StatelessROM.UUFKOAROM.dmsg"),
+     ("decl", Json.mkObj
+       [("tparams", Json.arr #[]), ("ty", jMsgDistrTy),
+        ("body", Json.mkObj [("kind", Json.str "Abstract")])])]
+
+/-- The statement `is_lossless dmsg`, whose applied predicate the export types at
+`domTy`. -/
+private def jDmsgLosslessSpec (domTy : Json) : Json :=
+  Json.mkObj
+    [("ty", jFormBool), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", domTy), ("cod", jFormBool)]),
+        ("kind", Json.str "Fop"),
+        ("path", Json.str "Top.Distr.is_lossless"),
+        ("targs", Json.arr #[jMsgTy])]),
+     ("args", Json.arr
+       #[Json.mkObj
+           [("ty", jMsgDistrTy), ("kind", Json.str "Fop"),
+            ("path", Json.str "Top.StatelessROM.UUFKOAROM.dmsg"),
+            ("targs", Json.arr #[])]])]
+
+/-- The `Th_axiom` item the operator's `[lossless]` annotation declares. -/
+private def jDmsgLLAxiom : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_axiom"), ("name", Json.str "dmsg_ll"),
+     ("path", Json.str "Top.StatelessROM.UUFKOAROM.dmsg_ll"),
+     ("decl", Json.mkObj
+       [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Axiom"),
+        ("spec", jDmsgLosslessSpec jMsgDistrTy)])]
+
+/-- The `Th_axiom` item of the clone's realized `dmsg_ll`. -/
+private def jDmsgLLLemma : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_axiom"), ("name", Json.str "dmsg_ll"),
+     ("path", Json.str "Top.StatelessROM.UUFKOAROM.UUFKOA.dmsg_ll"),
+     ("decl", Json.mkObj
+       [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+        ("spec", jDmsgLosslessSpec jMsgDistrTyAlias)])]
+
+/-- The `Th_theory` item of the clone instance. -/
+private def jUUFKOA : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_theory"), ("name", Json.str "UUFKOA"),
+     ("path", Json.str "Top.StatelessROM.UUFKOAROM.UUFKOA"),
+     ("mode", Json.str "concrete"), ("source", Json.null),
+     ("items", Json.arr #[jDmsgLLLemma])]
+
+/-- The `Th_theory` item declaring the operator, its axiom and the clone. -/
+private def jUUFKOAROM : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_theory"), ("name", Json.str "UUFKOAROM"),
+     ("path", Json.str "Top.StatelessROM.UUFKOAROM"),
+     ("mode", Json.str "abstract"), ("source", Json.null),
+     ("items", Json.arr #[jDmsg, jDmsgLLAxiom, jUUFKOA])]
+
+/-- The envelope items the statement's scope is walked in. -/
+private def dsromItems : List Json :=
+  [jMsgT,
+   Json.mkObj
+     [("kind", Json.str "Th_theory"), ("name", Json.str "StatelessROM"),
+      ("path", Json.str "Top.StatelessROM"),
+      ("mode", Json.str "concrete"), ("source", Json.null),
+      ("items", Json.arr #[jUUFKOAROM])]]
+
+/-- The tables the theory's statements decode against, carrying the envelope's
+items as the scope a lemma's premises are read from. -/
+private def dsromTables : FormTables :=
+  formTables
+    (registerThOperators (registerThTypes ecPrelude dsromItems) dsromItems) []
+    (scopeItems := dsromItems)
+
+/-- The path of the realized lemma. -/
+private def dmsgLemmaPath : String := "Top.StatelessROM.UUFKOAROM.UUFKOA.dmsg_ll"
+
+/-- The signature `dmsg`'s declaration gives it. -/
+private def dmsgSig : EcSig := ⟨.unit, .distr (.opaque "Top.msg_t")⟩
+
+-- The scope walk reaches one scope out and finds the axiom the lemma is proved
+-- from.
+#guard (scopeAxiomItems dsromItems dmsgLemmaPath).map itemPath
+  == ["Top.StatelessROM.UUFKOAROM.dmsg_ll"]
+
+-- The lemma's own theory declares no axiom, so reading it alone finds none.
+#guard (scopeAxiomItems [jUUFKOA] dmsgLemmaPath).isEmpty
+
+-- An axiom of an unrelated scope is not a premise.
+#guard (scopeAxiomItems dsromItems "Top.Other.T.thm").isEmpty
+
+-- The assembled statement is the goal under that axiom, both reads discharged by
+-- one binder.
+#guard (match decodeLemmaAt dsromTables dmsgLemmaPath with
+        | .ok (.allConst "Top.StatelessROM.UUFKOAROM.dmsg" t
+                 (.imp (.isLossless h) (.isLossless g))) =>
+            t == EcTy.distr (EcTy.opaque "Top.msg_t")
+              && h.opAppOf == some ("Top.StatelessROM.UUFKOAROM.dmsg", dmsgSig)
+              && g.opAppOf == some ("Top.StatelessROM.UUFKOAROM.dmsg", dmsgSig)
+        | _ => false)
+
+#guard (match decodeLemmaAt dsromTables dmsgLemmaPath with
+        | .ok f => EcForm.opsOf f == []
+        | _ => false)
+
+-- An imported axiom is not a goal of its theory.
+#guard (match decodeLemmaAt dsromTables "Top.StatelessROM.UUFKOAROM.dmsg_ll" with
+        | .error m => m.startsWith "ec-import: the statement"
+        | _ => false)
+
+-- A path no item declares is an error naming the path.
+#guard (match decodeLemmaAt dsromTables "Top.StatelessROM.UUFKOAROM.absent" with
+        | .error m => m.startsWith "ec-import: the export declares no Th_axiom"
+        | _ => false)
+
+/-- An imported axiom of the same scope whose statement reads an operator path in
+no table. -/
+private def jUndecodableAxiom : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_axiom"), ("name", Json.str "dmsg_side"),
+     ("path", Json.str "Top.StatelessROM.UUFKOAROM.dmsg_side"),
+     ("decl", Json.mkObj
+       [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Axiom"),
+        ("spec", Json.mkObj
+          [("ty", jFormBool), ("kind", Json.str "Fop"),
+           ("path", Json.str "Top.StatelessROM.UUFKOAROM.side"),
+           ("targs", Json.arr #[])])])]
+
+/-- The same scope carrying that axiom. -/
+private def dsromItemsUndecodable : List Json :=
+  [jMsgT,
+   Json.mkObj
+     [("kind", Json.str "Th_theory"), ("name", Json.str "StatelessROM"),
+      ("path", Json.str "Top.StatelessROM"),
+      ("mode", Json.str "concrete"), ("source", Json.null),
+      ("items", Json.arr
+        #[Json.mkObj
+            [("kind", Json.str "Th_theory"), ("name", Json.str "UUFKOAROM"),
+             ("path", Json.str "Top.StatelessROM.UUFKOAROM"),
+             ("mode", Json.str "abstract"), ("source", Json.null),
+             ("items", Json.arr #[jDmsg, jDmsgLLAxiom, jUndecodableAxiom, jUUFKOA])]])]]
+
+-- An axiom of the scope that does not decode rejects the lemma and names the
+-- axiom, rather than assembling a goal that is missing a premise.
+#guard (match decodeLemmaAt { dsromTables with
+            scopeItems := dsromItemsUndecodable } dmsgLemmaPath with
+        | .error m =>
+            m.startsWith "ec-import: the statement"
+              && (m.splitOn "Top.StatelessROM.UUFKOAROM.dmsg_side").length != 1
+        | _ => false)
+
+-- `is_lossless` applied to a term that is not a distribution is rejected.
+#guard (match decodeForm prfFormTables
+            (Json.mkObj
+              [("ty", jFormBool), ("kind", Json.str "Fapp"),
+               ("f", Json.mkObj
+                 [("ty", jFormBool), ("kind", Json.str "Fop"),
+                  ("path", Json.str "Top.Distr.is_lossless"),
+                  ("targs", Json.arr #[])]),
+               ("args", Json.arr
+                 #[Json.mkObj [("ty", jFormBool), ("kind", Json.str "Fop"),
+                               ("path", Json.str "Top.Pervasive.true"),
+                               ("targs", Json.arr #[])]])]) with
+        | .error _ => true
+        | _ => false)
+
+/-! ### A polymorphic statement
+
+`Top.pairS` of EasyCrypt's `theories/core/Core.ec` is
+
+```
+lemma pairS ['a 'b] : forall (x : 'a * 'b), x = (x.`1, x.`2).
+```
+
+The nodes below are the exporter's payload for that item: two type parameters, a
+`Ttuple` of two `Tvar` nodes in the binder's type, and the same `Tvar` nodes in
+the type of every subterm and in the `targs` of the applied equality. -/
+
+/-- A type-variable node, at the name and uniqueness stamp the export writes. -/
+private def jTvar (nm : String) (st : Nat) : Json :=
+  Json.mkObj [("kind", Json.str "Tvar"), ("name", Json.str nm), ("stamp", Json.num st)]
+
+/-- The type `'a * 'b`. -/
+private def jPairTvarTy : Json :=
+  Json.mkObj [("kind", Json.str "Ttuple"),
+    ("args", Json.arr #[jTvar "'a" 5162, jTvar "'b" 5163])]
+
+/-- The type `bool`, as the statement's nodes carry it. -/
+private def jPairSBoolTy : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+    ("path", Json.str "Top.Pervasive.bool"), ("args", Json.arr #[])]
+
+/-- The bound variable `x : 'a * 'b`. -/
+private def jPairSLocal : Json :=
+  Json.mkObj [("ty", jPairTvarTy), ("kind", Json.str "Flocal"),
+    ("name", Json.str "x"), ("stamp", Json.num 5164)]
+
+/-- A projection of the bound variable, at the component type `t`. -/
+private def jPairSProj (t : Json) (i : Nat) : Json :=
+  Json.mkObj [("ty", t), ("kind", Json.str "Fproj"), ("target", jPairSLocal),
+    ("index", Json.num i)]
+
+/-- Equality at `'a * 'b`. -/
+private def jPairSEqOp : Json :=
+  Json.mkObj
+    [("ty", Json.mkObj [("kind", Json.str "Tfun"), ("dom", jPairTvarTy),
+        ("cod", Json.mkObj [("kind", Json.str "Tfun"), ("dom", jPairTvarTy),
+          ("cod", jPairSBoolTy)])]),
+     ("kind", Json.str "Fop"), ("path", Json.str "Top.Pervasive.="),
+     ("targs", Json.arr #[jPairTvarTy])]
+
+/-- The body: the bound variable equated with the pair of its two
+projections. -/
+private def jPairSBody : Json :=
+  Json.mkObj [("ty", jPairSBoolTy), ("kind", Json.str "Fapp"), ("f", jPairSEqOp),
+    ("args", Json.arr #[jPairSLocal,
+      Json.mkObj [("ty", jPairTvarTy), ("kind", Json.str "Ftuple"),
+        ("args", Json.arr #[jPairSProj (jTvar "'a" 5162) 0,
+                            jPairSProj (jTvar "'b" 5163) 1])]])]
+
+/-- The `Th_axiom` item `Top.pairS`. -/
+def jPairSItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "pairS"),
+    ("path", Json.str "Top.pairS"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[Json.str "'a", Json.str "'b"]),
+       ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj [("ty", jPairSBoolTy), ("kind", Json.str "Fquant"),
+         ("quant", Json.str "Lforall"),
+         ("binders", Json.arr #[Json.mkObj
+           [("name", Json.str "x"), ("stamp", Json.num 5164),
+            ("gty", Json.mkObj [("kind", Json.str "GTty"), ("ty", jPairTvarTy)])]]),
+         ("body", jPairSBody)])])]
+
+-- The item declares two type parameters, in the order the source writes them.
+#guard (match axiomTyParams jPairSItem with
+        | .ok ("pairS", ["'a", "'b"]) => true
+        | _ => false)
+
+-- Each parameter carries one stamp everywhere it occurs, so the name is enough
+-- to tell the two apart.
+#guard (tyVarIdents tyParamDepth jPairSItem).eraseDups
+  == [("'a", 5162), ("'b", 5163)]
+
+#guard (tyVarIdents tyParamDepth jPairSItem).length == 18
+
+-- The rewriting leaves no type variable behind.
+#guard tyVarIdents tyParamDepth
+    (substTyParams ["'a", "'b"] tyParamDepth jPairSItem) == []
+
+-- With no assignment, each parameter is read at the opaque code of its reserved
+-- path, and every type position of the statement takes it: the binder's type,
+-- the equated terms, and the two projections.
+#guard (match decodeAxiom bareTables jPairSItem with
+        | .ok (.allTy (.prod (.opaque "#tyvar.'a") (.opaque "#tyvar.'b")) "x"
+                 (.eqT (.var _ "x")
+                   (.pair (.fst (.var _ "x")) (.snd (.var _ "x"))))) => true
+        | _ => false)
+
+#guard (match decodeAxiom bareTables jPairSItem with
+        | .ok f => EcForm.opsOf f == []
+        | _ => false)
+
+-- At an assignment the same statement decodes at the assigned codes.
+#guard (match decodeAxiomAt bareTables [.bool, .int] jPairSItem with
+        | .ok (.allTy (.prod .bool .int) "x"
+                 (.eqT (.var _ "x")
+                   (.pair (.fst (.var _ "x")) (.snd (.var _ "x"))))) => true
+        | _ => false)
+
+#guard (match decodeAxiomAt bareTables [.list .int, .fset .bool] jPairSItem with
+        | .ok (.allTy (.prod (.list .int) (.fset .bool)) "x" (.eqT _ _)) => true
+        | _ => false)
+
+-- An assignment of the wrong length is refused rather than padded.
+#guard (match decodeAxiomAt bareTables [.bool] jPairSItem with
+        | .error _ => true
+        | _ => false)
+
+/-! ### A statement reading a defined operator
+
+`Top.^^` of EasyCrypt's `theories/core/Bool.ec` is `op (^^) b1 b2 = b1 = !b2.`,
+and `Top.xorC` is `lemma xorC : forall b1 b2, b1 ^^ b2 = b2 ^^ b1.`. The nodes
+below are the exporter's payload for the two items. The lemma binds `b1` and `b2`
+at its own stamps and the definition binds parameters of the same two source
+names at its own, which is the case the expansion's renaming is for: bound under
+their source names alone, the definition's parameters would be refused by
+`FormTables.bindLocal`. -/
+
+/-- The type `bool`, as the two items carry it. -/
+private def jXorBoolTy : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+    ("path", Json.str "Top.Pervasive.bool"), ("args", Json.arr #[])]
+
+/-- The type `bool -> bool`. -/
+private def jXorFun1 : Json :=
+  Json.mkObj [("kind", Json.str "Tfun"), ("dom", jXorBoolTy), ("cod", jXorBoolTy)]
+
+/-- The type `bool -> bool -> bool`. -/
+private def jXorFun2 : Json :=
+  Json.mkObj [("kind", Json.str "Tfun"), ("dom", jXorBoolTy), ("cod", jXorFun1)]
+
+/-- A `bool`-typed read of a stamped identifier. -/
+private def jXorLocal (nm : String) (st : Nat) : Json :=
+  Json.mkObj [("ty", jXorBoolTy), ("kind", Json.str "Flocal"),
+    ("name", Json.str nm), ("stamp", Json.num st)]
+
+/-- A `bool`-typed binder. -/
+private def jXorBinder (nm : String) (st : Nat) : Json :=
+  Json.mkObj [("name", Json.str nm), ("stamp", Json.num st),
+    ("gty", Json.mkObj [("kind", Json.str "GTty"), ("ty", jXorBoolTy)])]
+
+/-- Equality at `bool`. -/
+private def jXorEqOp : Json :=
+  Json.mkObj [("ty", jXorFun2), ("kind", Json.str "Fop"),
+    ("path", Json.str "Top.Pervasive.="), ("targs", Json.arr #[jXorBoolTy])]
+
+/-- Boolean negation. -/
+private def jXorNotOp : Json :=
+  Json.mkObj [("ty", jXorFun1), ("kind", Json.str "Fop"),
+    ("path", Json.str "Top.Pervasive.[!]"), ("targs", Json.arr #[])]
+
+/-- A read of the defined operator. -/
+private def jXorOpNode : Json :=
+  Json.mkObj [("ty", jXorFun2), ("kind", Json.str "Fop"),
+    ("path", Json.str "Top.^^"), ("targs", Json.arr #[])]
+
+/-- A `bool`-typed application. -/
+private def jXorApp (f : Json) (args : Array Json) : Json :=
+  Json.mkObj [("ty", jXorBoolTy), ("kind", Json.str "Fapp"), ("f", f),
+    ("args", Json.arr args)]
+
+/-- The `Th_operator` item `Top.^^`. -/
+def jXorOp : Json :=
+  Json.mkObj [("kind", Json.str "Th_operator"), ("name", Json.str "^^"),
+    ("path", Json.str "Top.^^"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("ty", jXorFun2),
+       ("body", Json.mkObj
+         [("kind", Json.str "OP_Plain"),
+          ("form", Json.mkObj
+            [("ty", jXorFun2), ("kind", Json.str "Fquant"),
+             ("quant", Json.str "Llambda"),
+             ("binders", Json.arr #[jXorBinder "b1" 32499, jXorBinder "b2" 32500]),
+             ("body", jXorApp jXorEqOp
+               #[jXorLocal "b1" 32499,
+                 jXorApp jXorNotOp #[jXorLocal "b2" 32500]])])])])]
+
+/-- The `Th_axiom` item `Top.xorC`. -/
+def jXorCItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "xorC"),
+    ("path", Json.str "Top.xorC"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jXorBoolTy), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jXorBinder "b1" 32541, jXorBinder "b2" 32543]),
+          ("body", jXorApp jXorEqOp
+            #[jXorApp jXorOpNode #[jXorLocal "b1" 32541, jXorLocal "b2" 32543],
+              jXorApp jXorOpNode #[jXorLocal "b2" 32543, jXorLocal "b1" 32541]])])])]
+
+/-- The tables the lemma decodes against: the prelude with the definition
+registered through the walk that registers a theory's operators. -/
+private def xorTables : FormTables :=
+  formTables (registerThOperators ecPrelude [jXorOp]) []
+
+-- The declaration registers as a definition and not as a parameter.
+#guard xorTables.tables.defOpPaths.map Prod.fst == ["Top.^^"]
+
+#guard xorTables.tables.absOpPaths == []
+
+-- Each read expands to the definition's body under one binder per parameter, in
+-- source order and the first parameter outermost. The binders carry the
+-- parameters' stamps beside their source names, so the lemma's own `b1` and `b2`
+-- are untouched.
+#guard (match decodeAxiom xorTables jXorCItem with
+        | .ok (.allTy .bool "b1" (.allTy .bool "b2"
+                 (.eqT (.letIn "b1_32499" _ (.letIn "b2_32500" _ (.beq _ (.bnot _))))
+                       (.letIn "b1_32499" _ (.letIn "b2_32500" _ (.beq _ (.bnot _))))))) =>
+            true
+        | _ => false)
+
+-- The expanded statement reads no abstract operator.
+#guard (match decodeAxiom xorTables jXorCItem with
+        | .ok f => EcForm.opsOf f == []
+        | _ => false)
+
+-- Without the definition registered, the read has no image and the statement is
+-- refused naming the path.
+#guard (match decodeAxiom bareTables jXorCItem with
+        | .error _ => true
+        | _ => false)
+
+-- The definition is dropped for the decode of its own body, so the table a read
+-- decodes against is shorter than the one it started from.
+#guard (xorTables.withoutDefOp "Top.^^").tables.defOpPaths.isEmpty
+
+/-! ### A statement that reads a definition branching on the strict order
+
+`Top.max` of EasyCrypt's `theories/datatypes/Int.ec` is
+`op max (a b : int) = if a < b then b else a.`, and `Top.lez_maxr` is
+`lemma lez_maxr : forall a b, a <= b => max a b = b.`. The lemma's antecedent is
+the order comparison and the definition's body branches on the strict one, so the
+statement carries both spellings: the comparison at its own node and the negation
+of the reversed comparison inside the inlined body. -/
+
+/-- The type `int`, as the two items carry it. -/
+private def jMaxIntTy : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+    ("path", Json.str "Top.Pervasive.int"), ("args", Json.arr #[])]
+
+/-- A binary arrow type. -/
+private def jMaxFun2 (d₁ d₂ c : Json) : Json :=
+  Json.mkObj [("kind", Json.str "Tfun"), ("dom", d₁),
+    ("cod", Json.mkObj [("kind", Json.str "Tfun"), ("dom", d₂), ("cod", c)])]
+
+/-- A read of a stamped identifier at the type `t`. -/
+private def jMaxLocal (t : Json) (nm : String) (st : Nat) : Json :=
+  Json.mkObj [("ty", t), ("kind", Json.str "Flocal"), ("name", Json.str nm),
+    ("stamp", Json.num st)]
+
+/-- A binder at the type `t`. -/
+private def jMaxBinder (nm : String) (st : Nat) (t : Json) : Json :=
+  Json.mkObj [("name", Json.str nm), ("stamp", Json.num st),
+    ("gty", Json.mkObj [("kind", Json.str "GTty"), ("ty", t)])]
+
+/-- An operator node at the type `t`. -/
+private def jMaxOpNode (t : Json) (p : String) (targs : Array Json) : Json :=
+  Json.mkObj [("ty", t), ("kind", Json.str "Fop"), ("path", Json.str p),
+    ("targs", Json.arr targs)]
+
+/-- An application at the type `t`. -/
+private def jMaxApp (t f : Json) (args : Array Json) : Json :=
+  Json.mkObj [("ty", t), ("kind", Json.str "Fapp"), ("f", f), ("args", Json.arr args)]
+
+private def jMaxA : Json := jMaxLocal jMaxIntTy "a" 6828
+private def jMaxB : Json := jMaxLocal jMaxIntTy "b" 6829
+
+/-- The `Th_operator` item `Top.max`. -/
+def jMaxOp : Json :=
+  Json.mkObj [("kind", Json.str "Th_operator"), ("name", Json.str "max"),
+    ("path", Json.str "Top.max"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]),
+       ("ty", jMaxFun2 jMaxIntTy jMaxIntTy jMaxIntTy),
+       ("body", Json.mkObj
+         [("kind", Json.str "OP_Plain"),
+          ("form", Json.mkObj
+            [("ty", jMaxFun2 jMaxIntTy jMaxIntTy jMaxIntTy),
+             ("kind", Json.str "Fquant"), ("quant", Json.str "Llambda"),
+             ("binders", Json.arr #[jMaxBinder "a" 6828 jMaxIntTy,
+                                    jMaxBinder "b" 6829 jMaxIntTy]),
+             ("body", Json.mkObj
+               [("ty", jMaxIntTy), ("kind", Json.str "Fif"),
+                ("cond", jMaxApp jXorBoolTy
+                  (jMaxOpNode (jMaxFun2 jMaxIntTy jMaxIntTy jXorBoolTy)
+                    "Top.CoreInt.lt" #[]) #[jMaxA, jMaxB]),
+                ("then", jMaxB), ("else", jMaxA)])])])])]
+
+private def jLezA : Json := jMaxLocal jMaxIntTy "a" 6878
+private def jLezB : Json := jMaxLocal jMaxIntTy "b" 6880
+
+/-- The `Th_axiom` item `Top.lez_maxr`. -/
+def jLezMaxrItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "lez_maxr"),
+    ("path", Json.str "Top.lez_maxr"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jXorBoolTy), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jMaxBinder "a" 6878 jMaxIntTy,
+                                 jMaxBinder "b" 6880 jMaxIntTy]),
+          ("body", jMaxApp jXorBoolTy
+            (jMaxOpNode (jMaxFun2 jXorBoolTy jXorBoolTy jXorBoolTy)
+              "Top.Pervasive.=>" #[])
+            #[jMaxApp jXorBoolTy
+                (jMaxOpNode (jMaxFun2 jMaxIntTy jMaxIntTy jXorBoolTy)
+                  "Top.CoreInt.le" #[]) #[jLezA, jLezB],
+              jMaxApp jXorBoolTy
+                (jMaxOpNode (jMaxFun2 jMaxIntTy jMaxIntTy jXorBoolTy)
+                  "Top.Pervasive.=" #[jMaxIntTy])
+                #[jMaxApp jMaxIntTy
+                    (jMaxOpNode (jMaxFun2 jMaxIntTy jMaxIntTy jMaxIntTy)
+                      "Top.max" #[]) #[jLezA, jLezB],
+                  jLezB]])])])]
+
+/-- The tables the lemma decodes against. -/
+private def maxTables : FormTables :=
+  formTables (registerThOperators ecPrelude [jMaxOp]) []
+
+#guard maxTables.tables.defOpPaths.map Prod.fst == ["Top.max"]
+
+-- The lemma decodes under one binder per bound variable: the antecedent is the
+-- order comparison, and the left side of the consequent is the definition's body
+-- under one `let` per parameter, branching on the negation of the reversed
+-- comparison.
+#guard (match decodeAxiom maxTables jLezMaxrItem with
+        | .ok (.allTy .int "a" (.allTy .int "b"
+                 (.imp (.holds (.intLe _ _))
+                       (.eqT (.letIn _ _ (.letIn _ _ (.ite (.bnot (.intLe _ _)) _ _)))
+                             _)))) => true
+        | _ => false)
+
+-- The expanded statement reads no abstract operator.
+#guard (match decodeAxiom maxTables jLezMaxrItem with
+        | .ok f => EcForm.opsOf f == []
+        | _ => false)
+
+/-- `Top.^^`'s tables with boolean negation removed, at which its definition's
+body has no image. -/
+private def xorTablesNoNot : FormTables :=
+  { xorTables with
+    tables := { xorTables.tables with
+      opPaths := xorTables.tables.opPaths.filter
+        (fun e => e.1 != "Top.Pervasive.[!]") } }
+
+-- A failure inside a definition's body is reported as a failure of the operator,
+-- naming it, since the node it fails at is one the statement does not contain.
+#guard (match decodeAxiom xorTablesNoNot jXorCItem with
+        | .error m =>
+          (m.splitOn "Top.^^").length > 1
+            && (m.splitOn "is defined by a term that does not decode").length > 1
+        | _ => false)
+
+/-! ### Module binders at a module type declared inside a theory
+
+`formosa_modbinders.json` holds two nodes of the exporter's output for
+`formosa-crypto/formosa-mlkem`, each copied whole: the module type that
+`Top.Gm0_Gm1`'s module binder is declared at, and a binder at a module type six
+theories deep. Neither module type is a top-level item of the envelope it comes
+from, so neither is in the module-type table `surveyExtendTables` builds, and the
+first binds two module parameters, which `decodeModTypeInterface` rejects. Both
+`ModuleType` nodes carry the signature the binder is read against. -/
+
+/-- The two module-binder nodes, as text. -/
+private def formosaModText : String := include_str "formosa_modbinders.json"
+
+/-- The two module-binder nodes. -/
+private def formosaModNodes : Json :=
+  match Json.parse formosaModText with
+  | .ok j => j
+  | .error _ => Json.null
+
+/-- The node the two are read from by key. -/
+private def formosaModNode (k : String) : Json :=
+  (formosaModNodes.getObjVal? k).toOption.getD Json.null
+
+/-- The tables the two nodes decode against: the prelude, and the abstract types
+their procedure signatures name. -/
+private def formosaModTables : DecodeTables :=
+  ["Top.TT.plaintext", "Top.TT.randomness", "Top.key",
+   "Top.TT.PKE.pkey", "Top.TT.PKE.ciphertext"].foldl
+    DecodeTables.withOpaqueType ecPrelude
+
+-- `Top.KEMROMx2.CCA_ADV` binds two module parameters, so the route a module-type
+-- declaration is registered through has no interface for it.
+#guard (match getObj (formosaModNode "cca_adv") "sig" with
+        | .ok sigJ =>
+          (match decodeModSig formosaModTables sigJ with
+           | .error _ => true
+           | .ok _ => false)
+        | .error _ => false)
+
+-- Its node's own signature declares `guess`, at the argument tuple and result
+-- type the source gives it.
+#guard (match decodeModTypeSig formosaModTables (formosaModNode "cca_adv") with
+        | .ok I =>
+          I.names == ["guess"]
+            && (match I.sig "guess" with
+                | ⟨.prod (.opaque "Top.TT.PKE.pkey")
+                    (.prod (.opaque "Top.TT.PKE.ciphertext") (.opaque "Top.key")),
+                   .bool⟩ => true
+                | _ => false)
+        | .error _ => false)
+
+-- A binder at `Top.MLWE_PKE_Hash.FO_MLKEM.UU.TT.PKE.LorR.A` quantifies over a
+-- module at the interface that module type declares, against tables that carry
+-- no module type at all.
+#guard (match bindBinder (formTables ecPrelude []) "Lforall"
+                (formosaModNode "lorr_binder") with
+        | .ok (F, w) =>
+          F.modBinders.map Prod.fst == ["L"]
+            && (match w (.holds (.lit true)) with
+                | .allMod "L" I (.holds (.lit true)) => I.names == ["main"]
+                | _ => false)
+        | .error _ => false)
+
+/-! ### Integer comparison as the exported corpus carries it
+
+Three statements of EasyCrypt's `theories/datatypes/Int.ec`, transcribed from
+their nodes in an envelope of schema version 10:
+
+```
+lemma lez01 : 0 <= 1.
+lemma lezz  : forall (x : int), x <= x.
+lemma ltzW  : forall (z1 z2 : int), z1 < z2 => z1 <= z2.
+```
+
+`ltzW` carries both spellings of the order side by side, which is what pins the
+strict one to the negation of the reversed comparison. -/
+
+/-- The head of an integer relation, at the arrow type the envelope carries. -/
+private def jIntRelOp (p : String) : Json :=
+  jMaxOpNode (jMaxFun2 jMaxIntTy jMaxIntTy jFormBool) p #[]
+
+/-- The head of the boolean implication, at the arrow type the envelope
+carries. -/
+private def jBoolImpOp : Json :=
+  jMaxOpNode (jMaxFun2 jFormBool jFormBool jFormBool) "Top.Pervasive.=>" #[]
+
+/-- The body of `Top.lez01`. -/
+private def jLez01Body : Json :=
+  jMaxApp jFormBool (jIntRelOp "Top.CoreInt.le")
+    #[jFormIntLit "0", jFormIntLit "1"]
+
+-- A comparison in formula position is the comparison term, asserted to hold.
+#guard (match decodeForm bareTables jLez01Body with
+        | .ok (.holds (.intLe a b)) => isIntLit a 0 && isIntLit b 1
+        | _ => false)
+
+/-- The `Th_axiom` item `Top.lezz`. -/
+private def jLezzItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "lezz"),
+    ("path", Json.str "Top.lezz"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jFormBool), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jMaxBinder "x" 5372 jMaxIntTy]),
+          ("body", jMaxApp jFormBool (jIntRelOp "Top.CoreInt.le")
+            #[jMaxLocal jMaxIntTy "x" 5372,
+              jMaxLocal jMaxIntTy "x" 5372])])])]
+
+-- Both operands resolve to the one binder the statement quantifies over.
+#guard (match decodeAxiom bareTables jLezzItem with
+        | .ok (.allTy .int "x" (.holds (.intLe (.var .int nx) (.var .int ny)))) =>
+          nx == ny
+        | _ => false)
+
+/-- The `Th_axiom` item `Top.ltzW`. -/
+private def jLtzWItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "ltzW"),
+    ("path", Json.str "Top.ltzW"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jFormBool), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jMaxBinder "z1" 5903 jMaxIntTy,
+                                 jMaxBinder "z2" 5904 jMaxIntTy]),
+          ("body", jMaxApp jFormBool jBoolImpOp
+            #[jMaxApp jFormBool (jIntRelOp "Top.CoreInt.lt")
+                #[jMaxLocal jMaxIntTy "z1" 5903,
+                  jMaxLocal jMaxIntTy "z2" 5904],
+              jMaxApp jFormBool (jIntRelOp "Top.CoreInt.le")
+                #[jMaxLocal jMaxIntTy "z1" 5903,
+                  jMaxLocal jMaxIntTy "z2" 5904]])])])]
+
+-- The antecedent is the negation of the reversed comparison, so its operands
+-- stand in the opposite order to the consequent's.
+#guard (match decodeAxiom bareTables jLtzWItem with
+        | .ok (.allTy .int "z1" (.allTy .int "z2"
+                 (.imp (.holds (.bnot (.intLe (.var .int a₁) (.var .int a₂))))
+                       (.holds (.intLe (.var .int b₁) (.var .int b₂)))))) =>
+          a₁ != a₂ && a₁ == b₂ && a₂ == b₁
+        | _ => false)
+
+/-! ### List observation in a statement
+
+`size` reaches the term layer at the shape the expression layer already reads it
+at: the list's own type node gives the element code. -/
+
+
+/-- A statement over one binder named `l` at the type node `bty`, with `body` its
+assertion. -/
+private def jListItem (nm : String) (bty body : Json) : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str nm),
+    ("path", Json.str s!"Top.{nm}"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jFormBool), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jMaxBinder "l" 4211 bty]),
+          ("body", body)])])]
+
+-- `0 <= size l` reads the element code off the list's own type node.
+#guard (match decodeAxiom bareTables
+            (jListItem "sizeGe0" jFormIntList
+              (jMaxApp jFormBool (jIntRelOp "Top.CoreInt.le")
+                #[jFormIntLit "0",
+                  jMaxApp jFormInt
+                    (jMaxOpNode (Json.mkObj [("kind", Json.str "Tfun"),
+                        ("dom", jFormIntList), ("cod", jMaxIntTy)])
+                      "Top.List.size" #[])
+                    #[jMaxLocal jFormIntList "l" 4211]])) with
+        | .ok (.allTy (.list .int) "l" (.holds (.intLe a (.listSize (.var _ _))))) =>
+          isIntLit a 0
         | _ => false)
 
 end Golden

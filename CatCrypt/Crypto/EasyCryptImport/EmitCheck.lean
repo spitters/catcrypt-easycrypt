@@ -3,23 +3,32 @@ Copyright (c) 2026 CatCrypt Contributors. All rights reserved.
 Released under MIT license as described in the file LICENSE.
 Authors: CatCrypt Contributors
 -/
-import CatCrypt.Crypto.EasyCryptImport.Emit
+import CatCrypt.Crypto.EasyCryptImport.EmitMain
 import CatCrypt.Crypto.EasyCryptImport.Examples.OTPGenerated
 import CatCrypt.Crypto.EasyCryptImport.Examples.OTPArgGenerated
 import CatCrypt.Crypto.EasyCryptImport.Examples.NegGenerated
+import CatCrypt.Crypto.EasyCryptImport.Examples.OTPEquivGenerated
 import CatCrypt.Crypto.EasyCryptImport.Examples.OTPImport
 
 /-!
 # EasyCrypt import: the emitter's round trip
 
 This module closes the chain from the exporter's JSON to an elaborated AST for the
-one-time-pad export `otp.expected.json` and for the functor `Neg` of
-`functor.expected.json`.
+one-time-pad export `otp.expected.json`, for the functor `Neg` of
+`functor.expected.json`, and to an elaborated statement for `otp_equiv` of
+`otpequiv.expected.json`.
 
-**The committed file is the emitter's output.** For each of the three generated
-files, a `#guard` decodes the export and compares `emitFromJson`'s text with the
+**The committed file is the emitter's output.** For each of the four generated
+files, a `#guard` decodes the export and compares the emitter's text with the
 committed file's text, read by `include_str`. A hand edit to a generated file, or
-emitter drift, fails the check.
+emitter drift, fails the check. The three program files go through
+`emitFromJson`, the statement file through `emitStatementFromJson` at the flags
+`otpEquivStatementOptions` records.
+
+**The generated statement is the hand-written statement.**
+`otpEquivStatement_eq_otpEquivGoal` is a `rfl` proof that the proposition the
+generated file defines is `OTPEquivImport.otpEquivGoal`, which is what pins the
+resolution environment and the form the generating flags named.
 
 **The elaborated game is the hand-written game.** `otp0Game_eq_otpGame` is a `rfl`
 proof that the literal `Examples/OTPGenerated.lean` elaborates to is
@@ -100,6 +109,41 @@ private def negGeneratedText : String := include_str "Examples/NegGenerated.lean
         | .ok s => s == negGeneratedText
         | .error _ => false)
 
+/-- The exporter's output for the one-time-pad equivalence theory. -/
+private def otpEquivExport : Json :=
+  match Json.parse (include_str "otpequiv.expected.json") with
+  | .ok j => j
+  | .error _ => Json.null
+
+/-- The committed generated module for the statement `otp_equiv`. -/
+private def otpEquivGeneratedText : String :=
+  include_str "Examples/OTPEquivGenerated.lean"
+
+/-- The flags the generated statement module is emitted under: the resolution
+environment and the form of `Examples/OTPEquivImport.lean`, and the computation
+each of the two games' `main` resolves to. -/
+private def otpEquivStatementOptions : StatementOptions where
+  rho := "OTPEquivImport.otpEnv"
+  form := "OTPEquivImport.otpEquivForm"
+  imports := ["CatCrypt.Crypto.EasyCryptImport.Examples.OTPEquivImport"]
+  opens := ["CatCrypt.Crypto.EasyCryptBridge"]
+  procNames :=
+    [("Top.OTP0./main", "lowerClosedGame (OTPImport.otpGame false)"),
+     ("Top.OTP1./main", "lowerClosedGame (OTPImport.otpGame true)")]
+
+-- `Examples/OTPEquivGenerated.lean` is what the emitter prints for `otp_equiv`.
+#guard (match emitStatementFromJson ecPrelude "otp_equiv" "otpEquivStatement"
+            otpEquivStatementOptions otpEquivExport with
+        | .ok s => s == otpEquivGeneratedText
+        | .error _ => false)
+
+-- A judgement whose procedure the flags do not name has no printed statement,
+-- rather than one with a guessed name in it.
+#guard (match emitStatementFromJson ecPrelude "otp_equiv" "otpEquivStatement"
+            { otpEquivStatementOptions with procNames := [] } otpEquivExport with
+        | .error m => m.startsWith "ec-import: the procedure 'Top.OTP0./main'"
+        | .ok _ => false)
+
 -- A module of no parameter has no functor image, and a functor has no module
 -- image: each decoder rejects the other's item rather than producing a value.
 #guard (match emitFromJson ecPrelude "functor" "OTPArg" "d" otpExport with
@@ -109,6 +153,14 @@ private def negGeneratedText : String := include_str "Examples/NegGenerated.lean
 #guard (match emitFromJson ecPrelude "module" "Neg" "d" functorExport with
         | .error _ => true
         | .ok _ => false)
+
+/-! ## The elaborated statement is the hand-written statement -/
+
+/-- The proposition the generated statement module defines is the one
+`Examples/OTPEquivImport.lean` states: the same resolution environment applied to
+the same committed form. -/
+theorem otpEquivStatement_eq_otpEquivGoal :
+    Generated.otpEquivStatement = OTPEquivImport.otpEquivGoal := rfl
 
 /-! ## The elaborated game is the hand-written game -/
 
@@ -148,13 +200,13 @@ theorem generated_otp0_advantage_zero (A : Bool → SPComp Bool) :
 
 -- `main` calls `enc` at the exporter's qualified name, binding the result to `r`.
 #guard (match Generated.otpArgModule.procs "main" with
-        | { param := _, body := [.callProc "Top.OTPArg./enc" _ _ "r"], ret := _ } => true
+        | { params := _, body := [.callProc "Top.OTPArg./enc" _ _ "r"], ret := _ } => true
         | _ => false)
 
 -- The body of `enc` is the sample, then the conditional whose branches assign `c`,
 -- and its formal parameter is the source name `m`.
 #guard (match Generated.otpArgModule.procs "enc" with
-        | { param := "m",
+        | { params := ["m"],
             body := [.sample .bool "k",
                      .ite (.var .bool "m")
                        [.assign .bool "c" (.bxor (.var .bool "k") (.lit true))]
@@ -174,7 +226,7 @@ theorem generated_otp0_advantage_zero (A : Bool → SPComp Bool) :
 -- The body calls the parameter by the cross-path the exporter writes, at the
 -- signature the module type declares.
 #guard (match Generated.negFunctor.body.procs "guess" with
-        | { param := "c", body := [.callProc "P./guess" s _ "b"], ret := _ } =>
+        | { params := ["c"], body := [.callProc "P./guess" s _ "b"], ret := _ } =>
           s == { arg := .bool, res := .bool }
         | _ => false)
 
@@ -236,9 +288,114 @@ private def covFinAdd : EcExpr (.fin 3) :=
 #guard emitExpr covFinAdd ==
   "(EcExpr.finAdd (n := 3) (EcExpr.var (EcTy.fin 3) \"x\") (EcExpr.var (EcTy.fin 3) \"y\"))"
 
+/-- A literal at a finite-set code, printed as `EcTy.fsetOfList` of its
+elements. -/
+private def covFsetLit : EcExpr (.fset .bool) :=
+  (EcExpr.lit (t := (EcTy.fset EcTy.bool)) (EcTy.fsetOfList (a := EcTy.bool) [true]))
+#guard emitExpr covFsetLit ==
+  "(EcExpr.lit (t := (EcTy.fset EcTy.bool)) (EcTy.fsetOfList (a := EcTy.bool) [true]))"
+
+/-- The singleton finite set. -/
+private def covFsetSingle : EcExpr (.fset .bool) :=
+  (EcExpr.fsetSingle (a := EcTy.bool) (EcExpr.var EcTy.bool "x"))
+#guard emitExpr covFsetSingle ==
+  "(EcExpr.fsetSingle (a := EcTy.bool) (EcExpr.var EcTy.bool \"x\"))"
+
+/-- The union of two finite sets. -/
+private def covFsetUnion : EcExpr (.fset .bool) :=
+  (EcExpr.fsetUnion (a := EcTy.bool) (EcExpr.var (EcTy.fset EcTy.bool) "s")
+    (EcExpr.var (EcTy.fset EcTy.bool) "t"))
+#guard emitExpr covFsetUnion ==
+  "(EcExpr.fsetUnion (a := EcTy.bool) (EcExpr.var (EcTy.fset EcTy.bool) \"s\") \
+   (EcExpr.var (EcTy.fset EcTy.bool) \"t\"))"
+
+/-- Membership in a finite set. -/
+private def covFsetMem : EcExpr .bool :=
+  (EcExpr.fsetMem (a := EcTy.bool) (EcExpr.var (EcTy.fset EcTy.bool) "s")
+    (EcExpr.var EcTy.bool "x"))
+#guard emitExpr covFsetMem ==
+  "(EcExpr.fsetMem (a := EcTy.bool) (EcExpr.var (EcTy.fset EcTy.bool) \"s\") \
+   (EcExpr.var EcTy.bool \"x\"))"
+
+/-- The present option value. -/
+private def covSome : EcExpr (.option .bool) :=
+  (EcExpr.someE (a := EcTy.bool) (EcExpr.var EcTy.bool "x"))
+#guard emitExpr covSome ==
+  "(EcExpr.someE (a := EcTy.bool) (EcExpr.var EcTy.bool \"x\"))"
+
+/-- List cons, and the list literal it makes round trip as text. -/
+private def covListCons : EcExpr (.list .bool) :=
+  (EcExpr.listCons (a := EcTy.bool) (EcExpr.var EcTy.bool "x")
+    (EcExpr.lit (t := (EcTy.list EcTy.bool)) (EcTy.listEmpty (a := EcTy.bool))))
+#guard emitExpr covListCons ==
+  "(EcExpr.listCons (a := EcTy.bool) (EcExpr.var EcTy.bool \"x\") \
+   (EcExpr.lit (t := (EcTy.list EcTy.bool)) ([] : (EcTy.list EcTy.bool).interp)))"
+
+/-- Appending one element at the end of a list. -/
+private def covListRcons : EcExpr (.list .bool) :=
+  (EcExpr.listRcons (a := EcTy.bool) (EcExpr.var (EcTy.list EcTy.bool) "l")
+    (EcExpr.var EcTy.bool "x"))
+#guard emitExpr covListRcons ==
+  "(EcExpr.listRcons (a := EcTy.bool) (EcExpr.var (EcTy.list EcTy.bool) \"l\") \
+   (EcExpr.var EcTy.bool \"x\"))"
+
+/-- The length of a list. -/
+private def covListSize : EcExpr .int :=
+  (EcExpr.listSize (a := EcTy.bool) (EcExpr.var (EcTy.list EcTy.bool) "l"))
+#guard emitExpr covListSize ==
+  "(EcExpr.listSize (a := EcTy.bool) (EcExpr.var (EcTy.list EcTy.bool) \"l\"))"
+
+/-- Membership in a list. -/
+private def covListMem : EcExpr .bool :=
+  (EcExpr.listMem (a := EcTy.bool) (EcExpr.var (EcTy.list EcTy.bool) "l")
+    (EcExpr.var EcTy.bool "x"))
+#guard emitExpr covListMem ==
+  "(EcExpr.listMem (a := EcTy.bool) (EcExpr.var (EcTy.list EcTy.bool) \"l\") \
+   (EcExpr.var EcTy.bool \"x\"))"
+
+/-- The `i`-th element of a list or a default. -/
+private def covListNth : EcExpr .bool :=
+  (EcExpr.listNth (a := EcTy.bool) (EcExpr.var EcTy.bool "d")
+    (EcExpr.var (EcTy.list EcTy.bool) "l") (EcExpr.var EcTy.int "i"))
+#guard emitExpr covListNth ==
+  "(EcExpr.listNth (a := EcTy.bool) (EcExpr.var EcTy.bool \"d\") \
+   (EcExpr.var (EcTy.list EcTy.bool) \"l\") (EcExpr.var EcTy.int \"i\"))"
+
+/-- A distribution read out of a local, and the sample from it. -/
+private def covOfExpr : EcDistr .bool :=
+  (EcDistr.ofExpr (t := EcTy.bool) (EcExpr.var (EcTy.distr EcTy.bool) "d"))
+#guard emitDistr covOfExpr ==
+  "(EcDistr.ofExpr (t := EcTy.bool) (EcExpr.var (EcTy.distr EcTy.bool) \"d\"))"
+
+/-- A literal at a distribution code, which prints as the canonical inhabitant
+at the code-directed instance (`EcTy.defaultOf`; `Ty.lean` states why the
+instance is named). -/
+private def covDistrLit : EcExpr (.distr .bool) :=
+  (EcExpr.lit (t := (EcTy.distr EcTy.bool)) (EcTy.defaultOf (EcTy.distr EcTy.bool)))
+#guard emitExpr covDistrLit ==
+  "(EcExpr.lit (t := (EcTy.distr EcTy.bool)) \
+   (EcTy.defaultOf (EcTy.distr EcTy.bool)))"
+
 /-- A sample at a finite scalar type. -/
 private def covSample : EcStmt := (EcStmt.sample (EcTy.fin 3) "x")
 #guard emitStmt covSample == "(EcStmt.sample (EcTy.fin 3) \"x\")"
+
+/-- A destructuring assignment. -/
+private def covAssignTuple : EcStmt :=
+  (EcStmt.assignTuple (EcTy.prod EcTy.bool EcTy.unit) ["x", "y"]
+    (EcExpr.var (EcTy.prod EcTy.bool EcTy.unit) "p"))
+#guard emitStmt covAssignTuple ==
+  "(EcStmt.assignTuple (EcTy.prod EcTy.bool EcTy.unit) [\"x\", \"y\"] \
+   (EcExpr.var (EcTy.prod EcTy.bool EcTy.unit) \"p\"))"
+
+/-- A call whose result destructures. -/
+private def covCallProcTuple : EcStmt :=
+  (EcStmt.callProcTuple "S./kg" (EcSig.mk EcTy.unit (EcTy.prod EcTy.bool EcTy.unit))
+    (EcExpr.lit (t := EcTy.unit) ()) ["pk", "sk"])
+#guard emitStmt covCallProcTuple ==
+  "(EcStmt.callProcTuple \"S./kg\" (EcSig.mk EcTy.unit \
+   (EcTy.prod EcTy.bool EcTy.unit)) (EcExpr.lit (t := EcTy.unit) ()) \
+   [\"pk\", \"sk\"])"
 
 /-- A global read. -/
 private def covLoad : EcStmt := (EcStmt.load (EcGlobal.mk "Top.M.g" 3 EcTy.bool) "b")

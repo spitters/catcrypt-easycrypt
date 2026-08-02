@@ -100,18 +100,18 @@ def otpModule : EcModule where
   procs := fun p =>
     match p with
     | "init" =>
-        { param := "u"
+        { params := ["u"]
           body := [.sample .bool "k", .store kGlobal (.var .bool "k")]
           ret := .lit () }
     | "enc" =>
-        { param := "m"
+        { params := ["m"]
           body := [.load kGlobal "k"]
           ret := .bxor (.var .bool "k") (.var .bool "m") }
     | "clear" =>
-        { param := "u"
+        { params := ["u"]
           body := [.store kGlobal (.lit false)]
           ret := .lit () }
-    | _ => { param := "u", body := [], ret := .lit default }
+    | _ => { params := ["u"], body := [], ret := .lit default }
 
 /-- `otpLocs` is the footprint computed from the module's own `var`
 declarations. -/
@@ -179,7 +179,7 @@ def flipModule : EcModule where
   interface := advInterface
   globals := []
   procs := fun _ =>
-    { param := "c"
+    { params := ["c"]
       body := [.callProc (qualify "A" "guess") ⟨.bool, .bool⟩ (.var .bool "c") "b"]
       ret := .bnot (.var .bool "b") }
 

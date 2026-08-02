@@ -130,16 +130,70 @@ theorem Env.read_update_stamped (env : Env) (t u : EcTy) (x : String) (s : Nat)
       = env.read t (EcVarId.ofName x) :=
   Env.read_update_ne _ _ _ _ _ (by simp [EcVarId.ofName])
 
+/-- Bind a procedure's formal parameters at call entry, and a destructuring
+assignment's names to their components: the value is typed by the components'
+types as a right-nested product, and each binder takes its component in
+declaration order — no names bind nothing, one name binds the whole value,
+and the head of a longer list binds the product's first component before the
+tail recurses on the second. When the names outnumber the value's components —
+a shape the decoder's cross-checks reject — the head binds the whole remaining
+value and the tail is left unbound. The recursion is structural on the name
+list, so every arm reduces definitionally. -/
+def bindParams (t : EcTy) (xs : List String) (a : t.interp) (env : Env) : Env :=
+  match xs with
+  | [] => env
+  | x :: xs =>
+    match xs with
+    | [] => env.update x ⟨t, a⟩
+    | _ :: _ =>
+      match t, a with
+      | .prod u v, a => bindParams v xs a.2 (env.update x ⟨u, a.1⟩)
+      | t, a => env.update x ⟨t, a⟩
+termination_by structural xs
+
+@[simp] theorem bindParams_nil (t : EcTy) (a : t.interp) (env : Env) :
+    bindParams t [] a env = env := rfl
+
+@[simp] theorem bindParams_single (t : EcTy) (x : String) (a : t.interp)
+    (env : Env) : bindParams t [x] a env = env.update x ⟨t, a⟩ := rfl
+
+@[simp] theorem bindParams_cons₂ {u v : EcTy} (x y : String) (ys : List String)
+    (a : (EcTy.prod u v).interp) (env : Env) :
+    bindParams (.prod u v) (x :: y :: ys) a env
+      = bindParams v (y :: ys) a.2 (env.update x ⟨u, a.1⟩) := rfl
+
 /-! ## Expressions -/
 
-/-- Pure evaluation of a typed expression against a local valuation. -/
+/-- Pure evaluation of a typed expression against a local valuation.
+
+Evaluation is computable, which is what the `#guard` checks of the golden
+fixtures evaluate. The arms that compare values — the equality test, the
+finite-map lookups, list and finite-set membership, and set union — need
+decidable equality on a code the expression carries, which the `distr` code
+does not have, so each branches on `EcTy.hasEq` of that code and takes
+`decEqOfHasEq` on the true branch. The false branch is unreachable for every
+decoded expression: `decodeExpr` rejects an equality at a code outside
+`hasEq` and rejects list membership at such an element code, and `decodeTy`
+rejects a finite-map type whose key code and a finite-set type whose element
+code are outside it, so no decoded program carries one of these operations at
+a code without decidable equality. It is reachable from a hand-written literal,
+and answers there with the value named in the arm: the supplied default for
+`mapGetD`, `false` for the three membership tests and the equality, and the
+empty set for `fsetUnion`. Those answers are not the operations' meanings —
+they are what a total computable function returns where the operation has no
+meaning — so a hand-written literal at such a code states nothing about the
+operation. -/
 def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
   | _, .var t x,   env => env.read t x
   | _, .lit v,     _   => v
   | _, .bnot e,    env => !(evalExpr e env)
   | _, .band a b,  env => (evalExpr a env) && (evalExpr b env)
   | _, .bxor a b,  env => xor (evalExpr a env) (evalExpr b env)
-  | _, .beq a b,   env => decide (evalExpr a env = evalExpr b env)
+  | _, .beq (t := u) a b, env =>
+      if h : u.hasEq = true then
+        letI := decEqOfHasEq u h
+        decide (evalExpr a env = evalExpr b env)
+      else false
   | _, .pair x y,  env => (evalExpr x env, evalExpr y env)
   | _, .fst p,     env => (evalExpr p env).1
   | _, .snd p,     env => (evalExpr p env).2
@@ -147,14 +201,46 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
       (show Fin n from evalExpr a env) + (show Fin n from evalExpr b env)
   | _, .intAdd a b, env =>
       (show Int from evalExpr a env) + (show Int from evalExpr b env)
+  | _, .intMul a b, env =>
+      (show Int from evalExpr a env) * (show Int from evalExpr b env)
+  | _, .intOpp a, env => -(show Int from evalExpr a env)
+  | _, .intEdivz a b, env =>
+      (Int.ediv (show Int from evalExpr a env) (show Int from evalExpr b env),
+       Int.emod (show Int from evalExpr a env) (show Int from evalExpr b env))
   | _, .intLe a b, env =>
       decide ((show Int from evalExpr a env) ≤ (show Int from evalExpr b env))
   | _, .mapSet (a := a) (b := b) m k v, env =>
       EcTy.mapSet (a := a) (b := b) (evalExpr m env) (evalExpr k env) (evalExpr v env)
   | _, .mapMem (a := a) (b := b) m k, env =>
-      EcTy.mapMem (a := a) (b := b) (evalExpr m env) (evalExpr k env)
+      if h : a.hasEq = true then
+        EcTy.mapMem (a := a) (b := b) (evalExpr m env) (evalExpr k env) h
+      else false
   | _, .mapGetD (a := a) (b := b) m k d, env =>
-      EcTy.mapGetD (a := a) (b := b) (evalExpr m env) (evalExpr k env) (evalExpr d env)
+      if h : a.hasEq = true then
+        EcTy.mapGetD (a := a) (b := b) (evalExpr m env) (evalExpr k env)
+          (evalExpr d env) h
+      else evalExpr d env
+  | _, .someE (a := a) x, env => EcTy.someVal (a := a) (evalExpr x env)
+  | _, .listCons (a := a) x l, env =>
+      EcTy.listCons (a := a) (evalExpr x env) (evalExpr l env)
+  | _, .listRcons (a := a) l x, env =>
+      EcTy.listRcons (a := a) (evalExpr l env) (evalExpr x env)
+  | _, .listSize (a := a) l, env => EcTy.listSize (a := a) (evalExpr l env)
+  | _, .listMem (a := a) l x, env =>
+      if h : a.hasEq = true then
+        EcTy.listMem (a := a) (evalExpr l env) (evalExpr x env) h
+      else false
+  | _, .listNth (a := a) d l i, env =>
+      EcTy.listNth (a := a) (evalExpr d env) (evalExpr l env) (evalExpr i env)
+  | _, .fsetSingle (a := a) x, env => EcTy.fsetSingle (a := a) (evalExpr x env)
+  | _, .fsetUnion (a := a) s t, env =>
+      if h : a.hasEq = true then
+        EcTy.fsetUnion (a := a) (evalExpr s env) (evalExpr t env) h
+      else EcTy.defaultOf (.fset a)
+  | _, .fsetMem (a := a) s x, env =>
+      if h : a.hasEq = true then
+        EcTy.fsetMem (a := a) (evalExpr s env) (evalExpr x env) h
+      else false
 
 /-- Evaluate a boolean-typed expression to a `Bool`, the form a Lean-level `if`
 branches on. -/
@@ -215,6 +301,7 @@ noncomputable def evalDistr : {t : EcTy} → EcDistr t → Env → CatCrypt.Prob
   | _, .restrict (t := t) d x p, env =>
       NonUniform.restrict (evalDistr d env)
         (fun v => evalExpr p (env.update x ⟨t, v⟩))
+  | _, .ofExpr e, env => evalExpr e env
 
 /-- The uniform distribution expression at a finite code denotes the uniform
 sub-distribution on that code's interpretation. -/
@@ -271,6 +358,11 @@ argument denotes to the predicate its body evaluates to. -/
       NonUniform.restrict (evalDistr d env)
         (fun v => evalExpr p (env.update x ⟨t, v⟩)) := rfl
 
+/-- A distribution read out of an expression denotes the expression's value:
+the `distr` code's interpretation is `SDistr` itself. -/
+@[simp] theorem evalDistr_ofExpr {t : EcTy} (e : EcExpr (.distr t)) (env : Env) :
+    evalDistr (.ofExpr e) env = evalExpr e env := rfl
+
 /-- Rescaling a restriction is conditioning: `EcDistr.cond` is the composite the
 EasyCrypt definition `dcond d p = dscale (drestrict d p)` gives. -/
 theorem evalDistr_scale_restrict {t : EcTy} (d : EcDistr t) (x : EcVarId)
@@ -304,6 +396,8 @@ noncomputable def lowerStmts (ρ : ProcEnv) (procs : List (String × List EcStmt
   | _, [], env => SPComp.pure env
   | fuel, .assign t x e :: rest, env =>
       lowerStmts ρ procs fuel rest (env.update x ⟨t, evalExpr e env⟩)
+  | fuel, .assignTuple t xs e :: rest, env =>
+      lowerStmts ρ procs fuel rest (bindParams t xs (evalExpr e env) env)
   | fuel, .sample t x h :: rest, env =>
       SPComp.bind (t.sampleFin h)
         (fun v => lowerStmts ρ procs fuel rest (env.update x ⟨t, v⟩))
@@ -328,6 +422,9 @@ noncomputable def lowerStmts (ρ : ProcEnv) (procs : List (String × List EcStmt
   | fuel, .callProc q s arg x :: rest, env =>
       SPComp.bind (ρ q s (evalExpr arg env))
         (fun v => lowerStmts ρ procs fuel rest (env.update x ⟨s.res, v⟩))
+  | fuel, .callProcTuple q s arg xs :: rest, env =>
+      SPComp.bind (ρ q s (evalExpr arg env))
+        (fun v => lowerStmts ρ procs fuel rest (bindParams s.res xs v env))
   | 0, .call _ :: rest, env => lowerStmts ρ procs 0 rest env
   | fuel + 1, .call p :: rest, env =>
       SPComp.bind (lowerStmts ρ procs fuel (procBody procs p) env)
@@ -348,6 +445,13 @@ noncomputable def lowerStmts (ρ : ProcEnv) (procs : List (String × List EcStmt
     (fuel : Nat) (t : EcTy) (x : String) (e : EcExpr t) (rest : List EcStmt) (env : Env) :
     lowerStmts ρ procs fuel (.assign t x e :: rest) env
       = lowerStmts ρ procs fuel rest (env.update x ⟨t, evalExpr e env⟩) := by
+  simp [lowerStmts]
+
+@[simp] theorem lowerStmts_assignTuple (ρ : ProcEnv)
+    (procs : List (String × List EcStmt)) (fuel : Nat) (t : EcTy)
+    (xs : List String) (e : EcExpr t) (rest : List EcStmt) (env : Env) :
+    lowerStmts ρ procs fuel (.assignTuple t xs e :: rest) env
+      = lowerStmts ρ procs fuel rest (bindParams t xs (evalExpr e env) env) := by
   simp [lowerStmts]
 
 @[simp] theorem lowerStmts_sample (ρ : ProcEnv) (procs : List (String × List EcStmt))
@@ -442,6 +546,14 @@ theorem lowerStmts_store_finLoc (ρ : ProcEnv) (procs : List (String × List EcS
           (fun v => lowerStmts ρ procs fuel rest (env.update x ⟨s.res, v⟩)) := by
   simp [lowerStmts]
 
+@[simp] theorem lowerStmts_callProcTuple (ρ : ProcEnv)
+    (procs : List (String × List EcStmt)) (fuel : Nat) (q : String) (s : EcSig)
+    (arg : EcExpr s.arg) (xs : List String) (rest : List EcStmt) (env : Env) :
+    lowerStmts ρ procs fuel (.callProcTuple q s arg xs :: rest) env
+      = SPComp.bind (ρ q s (evalExpr arg env))
+          (fun v => lowerStmts ρ procs fuel rest (bindParams s.res xs v env)) := by
+  simp [lowerStmts]
+
 @[simp] theorem lowerStmts_call_succ (ρ : ProcEnv) (procs : List (String × List EcStmt))
     (fuel : Nat) (p : String) (rest : List EcStmt) (env : Env) :
     lowerStmts ρ procs (fuel + 1) (.call p :: rest) env
@@ -457,13 +569,14 @@ theorem lowerStmts_call_zero (ρ : ProcEnv) (procs : List (String × List EcStmt
 /-! ## Procedures, modules, functors, games -/
 
 /-- Lower a procedure body at signature `s` to a function from the argument to
-an `SPComp` computation of the result: bind the formal parameter as a local,
-run the body, and evaluate the return expression on the final valuation. -/
+an `SPComp` computation of the result: bind each formal parameter to its
+component of the argument, run the body, and evaluate the return expression on
+the final valuation. -/
 noncomputable def lowerProcAt (ρ : ProcEnv) (fuel : Nat) {s : EcSig} (pr : EcProcAt s) :
     s.arg.interp → SPComp s.res.interp :=
   fun a =>
     SPComp.bind
-      (lowerStmts ρ [] fuel pr.body (emptyEnv.update pr.param ⟨s.arg, a⟩))
+      (lowerStmts ρ [] fuel pr.body (bindParams s.arg pr.params a emptyEnv))
       (fun env => SPComp.pure (evalExpr pr.ret env))
 
 /-- Lower a concrete module to a record of `SPComp` procedures over its

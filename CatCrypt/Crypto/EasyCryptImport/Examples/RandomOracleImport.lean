@@ -86,7 +86,7 @@ def roInterface : EcInterface where
 /-- The body of `query`: read the log into a local, answer from it when the point
 is bound, otherwise sample an answer and write the extended log back. -/
 def roQueryProc : EcProcAt ⟨.int, .bool⟩ where
-  param := "x"
+  params := ["x"]
   body :=
     [ .load logGlobal "m",
       .ite (.mapMem (a := .int) (b := .bool) (.var logTy "m") (.var .int "x"))
@@ -139,8 +139,12 @@ theorem query_apply (x : Int) (h : Heap) :
       (fun env => SPComp.pure (evalExpr roQueryProc.ret env)) h = _
   by_cases hm : EcTy.mapMem (a := .int) (b := .bool) (h.gget logGlobal.loc) x = true
   · rw [if_pos hm]
+    -- `evalExpr`'s comparing arms branch on the key code's `hasEq`, so the set
+    -- needs both the lemma that reduces that condition and the one that
+    -- reduces the branch it leaves.
     simp only [roQueryProc, lowerStmts_load, lowerStmts_ite, lowerStmts_assign,
-      lowerStmts_nil, evalCond_eq, evalExpr, logGlobal_ty, Env.read_update_same,
+      lowerStmts_nil, evalCond_eq, evalExpr, EcTy.hasEq_int, dite_true,
+      logGlobal_ty, Env.read_update_same,
       Env.read_update_ne _ EcTy.int "m" "x" _ (by decide), SPComp.bind, SPComp.gget,
       SPComp.pure, SDistr.pure_bind, hm, if_true]
   · have hm' : EcTy.mapMem (a := .int) (b := .bool) (h.gget logGlobal.loc) x = false := by
@@ -148,6 +152,7 @@ theorem query_apply (x : Int) (h : Heap) :
     rw [if_neg (by simp [hm'])]
     simp only [roQueryProc, lowerStmts_load, lowerStmts_ite, lowerStmts_sample,
       lowerStmts_store, lowerStmts_nil, sampleFin_bool, evalCond_eq, evalExpr,
+      EcTy.hasEq_int, dite_true,
       logGlobal_ty, Env.read_update_same, Env.read_update_ne _ EcTy.int "m" "x" _ (by decide),
       Env.read_update_ne _ logTy "r" "m" _ (by decide),
       Env.read_update_ne _ EcTy.int "r" "x" _ (by decide),
@@ -156,8 +161,6 @@ theorem query_apply (x : Int) (h : Heap) :
     simp only [SPComp.bind, SPComp.gset, SPComp.sample, SPComp.pure,
       SDistr.pure_bind, SDistr.bind_assoc]
     simp only [Env.read_update_same]
-    exact (SDistr.bind_assoc _ _ _).trans
-      (congrArg (SDistr.bind (SDistr.uniform Bool)) (funext fun a => SDistr.pure_bind _ _))
 
 /-! ## A bound point is deterministic -/
 
@@ -171,7 +174,6 @@ theorem query_apply_cached (x : Int) (h : Heap) (r : Bool) (hc : logAt h x = som
   have hg : EcTy.mapGetD (a := .int) (b := .bool) (h.gget logGlobal.loc) x false = r := by
     rw [EcTy.mapGetD, hc]; rfl
   rw [query_apply, if_pos hm, hg]
-  rfl
 
 /-! ## A fresh point is uniform -/
 
@@ -185,7 +187,6 @@ theorem query_apply_fresh (x : Int) (h : Heap) (hc : logAt h x = none) :
   have hm : EcTy.mapMem (a := .int) (b := .bool) (h.gget logGlobal.loc) x = false := by
     rw [EcTy.mapMem, hc]; rfl
   rw [query_apply, if_neg (by simp [hm])]
-  rfl
 
 /-- The answer to a fresh point is uniform on `Bool`, independently of the log
 contents. -/
@@ -206,7 +207,6 @@ theorem logAt_after_fresh (x : Int) (r : Bool) (h : Heap) :
     logAt (h.gset logGlobal.loc
       (EcTy.mapSet (a := .int) (b := .bool) (h.gget logGlobal.loc) x r)) x = some r := by
   rw [logAt_def, Heap.gget_gset_same, EcTy.mapFind_mapSet_same]
-  rfl
 
 /-- Querying the same point twice returns the same value: the second query reads
 the entry the first one wrote. -/

@@ -4,6 +4,8 @@ Released under MIT license as described in the file LICENSE.
 Authors: CatCrypt Contributors
 -/
 import CatCrypt.Crypto.EasyCryptImport.Json
+import Mathlib.Data.String.Basic
+import Mathlib.Data.Multiset.Sort
 
 /-!
 # EasyCrypt import: emitting the decoded AST as Lean source
@@ -96,10 +98,25 @@ def emitTy : EcTy → String
   | .prod a b => s!"(EcTy.prod {emitTy a} {emitTy b})"
   | .int => "EcTy.int"
   | .map a b => s!"(EcTy.map {emitTy a} {emitTy b})"
+  | .option a => s!"(EcTy.option {emitTy a})"
+  | .list a => s!"(EcTy.list {emitTy a})"
+  | .fset a => s!"(EcTy.fset {emitTy a})"
+  | .distr a => s!"(EcTy.distr {emitTy a})"
+  | .intRange lo hi _ => s!"(EcTy.intRange ({lo} : Int) ({hi} : Int))"
+  | .opaque n => s!"(EcTy.opaque {emitStr n})"
 
 /-- A value of `t.interp` as a Lean term at that type. A `fin n` value is printed
 as a numeral ascribed to `Fin n`, and a map value as an association-list literal
-ascribed to the interpretation of its code. -/
+ascribed to the interpretation of its code. A finite-set value is printed as
+`EcTy.fsetOfList` of its elements, ordered by their printed form — an order on
+the printed strings is invariant under permutation of the underlying multiset,
+so the text is well defined on the quotient. The printed element list is one
+representative; equality of set values is quotient equality, so which list of
+its elements is written is not part of the value. A distribution value prints
+as the canonical inhabitant: the only distribution literal the decoder
+produces is the `witness` row, whose value is `default`, and a hand-written
+literal at another distribution value is outside what a printed term can
+denote. -/
 def emitVal : (t : EcTy) → t.interp → String
   | .unit, _ => "()"
   | .bool, b => match (show Bool from b) with | true => "true" | false => "false"
@@ -111,6 +128,27 @@ def emitVal : (t : EcTy) → t.interp → String
         ((show List (a.interp × b.interp) from m).map (fun kv =>
           "(" ++ emitVal a kv.1 ++ ", " ++ emitVal b kv.2 ++ ")"))
         ++ "] : " ++ emitTy (.map a b) ++ ".interp)"
+  | .option a, v =>
+      (match (show Option a.interp from v) with
+       | none => "(none : "
+       | some x => "((some " ++ emitVal a x ++ ") : ")
+        ++ emitTy (.option a) ++ ".interp)"
+  | .list a, l =>
+      "([" ++ String.intercalate ", " ((show List a.interp from l).map (emitVal a))
+        ++ "] : " ++ emitTy (.list a) ++ ".interp)"
+  | .fset a, s =>
+      "(EcTy.fsetOfList (a := " ++ emitTy a ++ ") ["
+        ++ String.intercalate ", "
+          (Multiset.sort (Multiset.map (emitVal a)
+            (show Finset a.interp from s).val))
+        ++ "])"
+  | .distr a, _ => "(EcTy.defaultOf " ++ emitTy (.distr a) ++ ")"
+  | .intRange lo hi h, v =>
+      "(⟨(" ++ toString (show {x : Int // lo ≤ x ∧ x < hi} from v).val
+        ++ " : Int), by omega⟩ : " ++ emitTy (.intRange lo hi h) ++ ".interp)"
+  | .opaque n, z =>
+      "((" ++ toString (show Int from z) ++ " : Int) : "
+        ++ emitTy (.opaque n) ++ ".interp)"
 
 /-- A procedure signature as a Lean term. -/
 def emitSig (s : EcSig) : String :=
@@ -155,6 +193,10 @@ def emitExpr : {t : EcTy} → EcExpr t → String
       "(EcExpr.finAdd (n := " ++ toString n ++ ") " ++ emitExpr a ++ " "
         ++ emitExpr b ++ ")"
   | _, .intAdd a b => "(EcExpr.intAdd " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
+  | _, .intMul a b => "(EcExpr.intMul " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
+  | _, .intOpp a => "(EcExpr.intOpp " ++ emitExpr a ++ ")"
+  | _, .intEdivz a b =>
+      "(EcExpr.intEdivz " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
   | _, .intLe a b => "(EcExpr.intLe " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
   | _, .mapSet m k v =>
       "(EcExpr.mapSet " ++ emitExpr m ++ " " ++ emitExpr k ++ " " ++ emitExpr v ++ ")"
@@ -164,6 +206,30 @@ def emitExpr : {t : EcTy} → EcExpr t → String
   | _, @EcExpr.mapGetD a b m k d =>
       "(EcExpr.mapGetD (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
         ++ emitExpr m ++ " " ++ emitExpr k ++ " " ++ emitExpr d ++ ")"
+  | _, @EcExpr.someE a x =>
+      "(EcExpr.someE (a := " ++ emitTy a ++ ") " ++ emitExpr x ++ ")"
+  | _, @EcExpr.listCons a x l =>
+      "(EcExpr.listCons (a := " ++ emitTy a ++ ") " ++ emitExpr x ++ " "
+        ++ emitExpr l ++ ")"
+  | _, @EcExpr.listRcons a l x =>
+      "(EcExpr.listRcons (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ " "
+        ++ emitExpr x ++ ")"
+  | _, @EcExpr.listSize a l =>
+      "(EcExpr.listSize (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ ")"
+  | _, @EcExpr.listMem a l x =>
+      "(EcExpr.listMem (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ " "
+        ++ emitExpr x ++ ")"
+  | _, @EcExpr.listNth a d l i =>
+      "(EcExpr.listNth (a := " ++ emitTy a ++ ") " ++ emitExpr d ++ " "
+        ++ emitExpr l ++ " " ++ emitExpr i ++ ")"
+  | _, @EcExpr.fsetSingle a x =>
+      "(EcExpr.fsetSingle (a := " ++ emitTy a ++ ") " ++ emitExpr x ++ ")"
+  | _, @EcExpr.fsetUnion a s t =>
+      "(EcExpr.fsetUnion (a := " ++ emitTy a ++ ") " ++ emitExpr s ++ " "
+        ++ emitExpr t ++ ")"
+  | _, @EcExpr.fsetMem a s x =>
+      "(EcExpr.fsetMem (a := " ++ emitTy a ++ ") " ++ emitExpr s ++ " "
+        ++ emitExpr x ++ ")"
 
 /-! ## Distributions -/
 
@@ -195,6 +261,8 @@ def emitDistr : {t : EcTy} → EcDistr t → String
   | _, @EcDistr.restrict t d x p =>
       "(EcDistr.restrict (t := " ++ emitTy t ++ ") " ++ emitDistr d ++ " "
         ++ emitVarId x ++ " " ++ emitExpr p ++ ")"
+  | _, @EcDistr.ofExpr t e =>
+      "(EcDistr.ofExpr (t := " ++ emitTy t ++ ") " ++ emitExpr e ++ ")"
 
 /-! ## Statements -/
 
@@ -204,6 +272,9 @@ mutual
 def emitStmt : EcStmt → String
   | .assign t x e =>
       "(EcStmt.assign " ++ emitTy t ++ " " ++ emitStr x ++ " " ++ emitExpr e ++ ")"
+  | .assignTuple t xs e =>
+      "(EcStmt.assignTuple " ++ emitTy t ++ " " ++ emitTerms (xs.map emitStr)
+        ++ " " ++ emitExpr e ++ ")"
   | .sample t x _ => "(EcStmt.sample " ++ emitTy t ++ " " ++ emitStr x ++ ")"
   | .sampleD t x d =>
       "(EcStmt.sampleD " ++ emitTy t ++ " " ++ emitStr x ++ " " ++ emitDistr d ++ ")"
@@ -218,6 +289,9 @@ def emitStmt : EcStmt → String
   | .callProc q s arg x =>
       "(EcStmt.callProc " ++ emitStr q ++ " " ++ emitSig s ++ " "
         ++ emitExpr arg ++ " " ++ emitStr x ++ ")"
+  | .callProcTuple q s arg xs =>
+      "(EcStmt.callProcTuple " ++ emitStr q ++ " " ++ emitSig s ++ " "
+        ++ emitExpr arg ++ " " ++ emitTerms (xs.map emitStr) ++ ")"
 
 /-- The statements of a block, each as a Lean term on one line. -/
 def emitStmtList : List EcStmt → List String
@@ -256,7 +330,7 @@ def emitGame (declName : String) (g : EcGame) : String :=
 indented by `ind`. -/
 def emitSigProc (ind : String) (sp : SigProc) : String :=
   "{ sig := " ++ emitSig sp.sig ++ "\n"
-    ++ ind ++ "  proc := EcProcAt.mk " ++ emitStr sp.proc.param
+    ++ ind ++ "  proc := EcProcAt.mk " ++ emitTerms (sp.proc.params.map emitStr)
     ++ emitBlockLines (ind ++ "    ") sp.proc.body ++ "\n"
     ++ ind ++ "    " ++ emitExpr sp.proc.ret ++ " }"
 

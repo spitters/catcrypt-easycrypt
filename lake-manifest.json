@@ -7,10 +7,10 @@
       "type": "git",
       "subDir": null,
       "scope": "",
-      "rev": "11f740ee46adf8c1fb0e80e7f71a8a4ea1e28cef",
+      "rev": "f22c0373759a4f2a5590812cae975c0b77f4dc40",
       "name": "catcryptCore",
       "manifestFile": "lake-manifest.json",
-      "inputRev": "0.1.0-alpha.2",
+      "inputRev": "0.1.0-alpha.4",
       "inherited": false,
       "configFile": "lakefile.lean"
     },
