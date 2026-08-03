@@ -66,6 +66,16 @@ of a binder live at the read site nor capture it; each argument is decoded at it
 own type and compared with the code the declaration gives; and the body's decode
 is reported as a failure of the operator, naming it.
 
+Two body shapes have no image at the term layer: a quantified formula, which
+`EcTerm` has no binder for, and an application of a definition written over type
+parameters, whose path the term layer's operator tables do not carry. An
+application of a definition at one of those bodies is decoded by `decodeForm`
+instead, at the same discipline — the arguments are terms, the parameters are
+bound at the read site, the body is decoded against the tables with that
+definition dropped — with `EcForm.letF` in place of `EcTerm.letIn`. `defBodyIsForm`
+is the syntactic test that picks the route, and it holds of those two shapes
+only, so a definition the term layer reads is still read there.
+
 ## A definition over type parameters expands at the read site
 
 A theory-level `op f ['a] x = e.` has no codes until a read site gives its type
@@ -73,12 +83,12 @@ parameters values, and `DecodeTables.polyOpPaths` holds the declaration as the
 exporter wrote it. `decodeForm` decodes an application of one as the definition's
 body: the type arguments the node carries are decoded and entered as the codes of
 the type parameters (`DecodeTables.tyVarCodes`), and the value arguments replace
-the parameters in the body syntactically, since a parameter may be function-typed
-and `EcTy` has no arrow code to bind one at. The expansion is the formula
+the parameters in the body syntactically, since the argument at a function-typed
+parameter may be a lambda, which has no term image. The expansion is the formula
 decoder's because these bodies are quantified — `associative f` is
-`forall x y z, f x (f y z) = f (f x y) z` — and the recursion is measured on the
-definitions of this kind still available, as the concrete-definition expansion is
-measured on `defOpPaths`.
+`forall x y z, f x (f y z) = f (f x y) z`. The formula decoder expands
+definitions of both kinds, so its recursion is measured on the definitions of
+each still available together with the node's size, ordered lexicographically.
 
 ## A type parameter is read at a reserved type path
 
@@ -127,6 +137,8 @@ table is an error.
 | `Fop p`, `p` in `absOpPaths` | `EcTerm.opApp` at the declared signature |
 | `Fapp` of `Fop p`, `p` in `absOpPaths` | `EcTerm.opApp` at the declared signature, applied to the arguments as the right-nested pair |
 | `Fapp` of `Fop p`, `p` in `polyOpPaths` | the definition's body, at the type arguments the node carries and with the value arguments substituted |
+| `Fapp` of `Fop p`, `p` in `defOpPaths` at a body `decodeTerm` has no image for | the definition's body as a formula, under one `EcForm.letF` per parameter |
+| `Fapp` of a head that is no `Fop`, in term position | `EcTerm.app`, one per argument, at the arrow codes the head's type gives |
 | `Fapp` of `is_lossless` to a distribution-typed term | `EcForm.isLossless` |
 | `Fpvar` of `PVloc res` | `EcTerm.res` at the memory's side |
 | `Fpvar` of `PVglob` | `EcTerm.glob` |
@@ -515,8 +527,9 @@ def appHeadPath (j : Json) : Except String String := do
   match ← getStr fJ "kind" with
   | "Fop" => getStr fJ "path"
   | k =>
-    fail s!"application of a head of kind '{k}' in {j.compress}: a formula \
-      applies operators only, and the AST has no higher-order application"
+    fail s!"application of a head of kind '{k}' in {j.compress}: the head of a \
+      formula-position application is an operator; a function applied to an \
+      argument decodes in term position"
 
 /-- The path of the first type argument of an applied operator, when that
 argument is a nullary type constructor. -/
@@ -700,18 +713,54 @@ def wrapOpLets {t : EcTy} :
   | [], e => e
   | (nm, ⟨_, v⟩) :: rest, e => .letIn nm v (wrapOpLets rest e)
 
+/-- The formula `body` under one `letF` per bound parameter, the first parameter
+outermost. -/
+def wrapOpLetsF :
+    List (String × (u : EcTy) × EcTerm u) → EcForm → EcForm
+  | [], f => f
+  | (nm, ⟨_, v⟩) :: rest, f => .letF nm v (wrapOpLetsF rest f)
+
 /-- The judgement node kinds, which are formulas and never terms or
 probabilities. -/
 def judgementKinds : List String :=
   ["FhoareF", "FhoareS", "FbdHoareF", "FbdHoareS", "FeHoareF", "FeHoareS",
    "FequivF", "FequivS", "FeagerF"]
 
+/-- The term `f` applied to the arguments `xs` in order, at the arrow codes `f`'s
+own code gives. A head whose code is no arrow, and an argument whose code is not
+the domain the head expects, are each rejected with a message naming the two
+codes.
+
+The exporter writes a curried application with all of its arguments in one node,
+so this walks the list and peels one arrow per argument; a head applied to fewer
+arguments than its code has arrows lands at the remaining arrow code, which the
+read site then has to expect. -/
+def applyArgs : ((t : EcTy) × EcTerm t) → List ((u : EcTy) × EcTerm u) →
+    Except String ((r : EcTy) × EcTerm r)
+  | f, [] => .ok f
+  | ⟨.arrow a b, f⟩, ⟨u, x⟩ :: rest =>
+      if h : u = a then
+        applyArgs ⟨b, EcTerm.app f (EcTerm.castTy h x)⟩ rest
+      else
+        fail s!"a function of domain {repr a} is applied to an argument of type \
+          {repr u}"
+  | ⟨t, _⟩, _ :: _ =>
+    fail s!"a value of type {repr t} is applied to an argument: only an arrow \
+      code is applied"
+
 /-! ## Terms
 
 A term decodes at the type code the context expects, and the node's own `ty`
 field must agree with it, exactly as an expression does in `Json.lean`. `EcTerm`
 contains no formula, so this decoder stands outside the mutual recursion
-below. -/
+below.
+
+An `Fapp` whose head is an `Fop` is an operator application, and the operator
+routes below decode it. An `Fapp` whose head is a lambda has no image, since
+`EcTerm` has no lambda. Any other head is a function applied to arguments: the
+head decodes at its own type node, which is an arrow code, and `applyArgs` peels
+one arrow per argument. That head is typically an `Flocal` an enclosing
+`EcForm.allTy` bound at a function type. -/
 
 /-- Decode a formula node in term position, at the type code `t`. -/
 def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t) :=
@@ -973,7 +1022,7 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                 single variable"
             | .ok k => fail s!"unsupported let pattern kind '{k}' in {patJ.compress}"
         else if kind = "Fapp" then
-          match getObj j "f" with
+          match _hfh : getObj j "f" with
           | .error e => .error e
           | .ok fJ =>
             match getStr fJ "kind" with
@@ -1180,6 +1229,23 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                           | .error e => .error e
                           | .ok ye => .ok (.intEdivz xe ye)
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intAbsz, .int =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe => .ok (.intAbsz xe)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    | .intGcd, .int =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.intGcd xe ye)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                     | .intLe, .bool =>
                       match arr.toList.attach with
                       | [⟨x, _⟩, ⟨y, _⟩] =>
@@ -1278,9 +1344,35 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                     | _, _ =>
                       fail s!"operator '{p}' cannot produce a value of type {repr t}"
-            | .ok k =>
-              fail s!"application of a head of kind '{k}': the AST applies \
-                operators only, and has no higher-order application"
+            | .ok "Fquant" =>
+              fail s!"application of a head of kind 'Fquant' in {j.compress}: a \
+                lambda has no term image, so an application of one is not a term"
+            | .ok _ =>
+              match decodeTyField F.tables fJ "ty" with
+              | .error e => .error e
+              | .ok ft =>
+                match decodeTerm F ft fJ with
+                | .error e => .error e
+                | .ok fe =>
+                  match _hha : getArr j "args" with
+                  | .error e => .error e
+                  | .ok arr =>
+                    match arr.toList.attach.mapM (fun ⟨x, _⟩ =>
+                        match decodeTyField F.tables x "ty" with
+                        | .error e => Except.error e
+                        | .ok u =>
+                          match decodeTerm F u x with
+                          | .error e => Except.error e
+                          | .ok xe => Except.ok (Sigma.mk u xe)) with
+                    | .error e => .error e
+                    | .ok vs =>
+                      match applyArgs ⟨ft, fe⟩ vs with
+                      | .error e => .error e
+                      | .ok r =>
+                        if h : r.1 = t then .ok (EcTerm.castTy h r.2)
+                        else
+                          fail s!"the application in {j.compress} has type \
+                            {repr r.1}, context expects {repr t}"
         else
           fail s!"unsupported formula node kind '{kind}' in term position in \
             {j.compress}"
@@ -1600,23 +1692,24 @@ codes, and the value arguments replace the parameters in the body before it is
 decoded.
 
 The value arguments go in by substitution rather than by binding the parameters
-to values, because a parameter may be function-typed — `associative`'s is — and
-`EcTy` has no arrow code to bind one at. What the body's applications name after
-the substitution is the argument's own operator.
+to values, because the argument at a function-typed parameter — `associative`'s
+is one — is written as an operator or a lambda, and a lambda has no term image.
+What the body's applications name after the substitution is the argument's own
+operator.
 
 The substitution contracts where the parameter it replaces heads an application
 and the argument is a lambda, since the exporter writes a partial application as
 one: `right_loop inv o` reads `cancel` at `fun x => o x y`, and `cancel`'s body
 applies both of its parameters, so the two meet. A lambda planted under an
-application has no image, because a formula applies operators only, and the
+application has no image, because the term layer has no lambda, and the
 contracted node is the lambda's body at the arguments instead. An application the
 lambda's binders do not match in number stands as it is and is reported there.
 
 The expansion belongs to the formula decoder because these bodies are
 quantified: `associative f` is defined by `forall x y z, f x (f y z) = f (f x y)
 z`, and `EcForm.allTy` is where a binder has an image. The body is not a sub-node
-of the application that reads it, so the recursion is measured on the pair of the
-definitions over type parameters still available and the node's size, ordered
+of the application that reads it, so the recursion is measured on the definitions
+of each kind still available together with the node's size, ordered
 lexicographically, and the body is decoded against the tables with that
 definition dropped: a definition cannot be reached from inside itself, and a
 chain of reads is as long as the table. -/
@@ -1752,6 +1845,36 @@ def polyTyArgs (T : DecodeTables) (pd : EcPolyOpDefn) (j : Json) :
   else
     let codes ← targs.mapM (decodeTy T)
     .ok (pd.tyParams.zip codes)
+
+/-! ## A concrete definition whose body is a formula
+
+`decodeTerm` reads a concrete definition at the term layer, and two body shapes
+have no image there: a quantified formula, which `EcTerm` has no binder for, and
+an application of a definition written over type parameters, whose path the term
+layer's operator tables do not carry. A read of such a definition in formula
+position is decoded by `decodeForm` instead, at the same discipline the term
+layer uses — the arguments are terms, the parameters are bound at the read site,
+and the body is decoded against the tables with that definition dropped — with
+`EcForm.letF` in place of `EcTerm.letIn`.
+
+`defBodyIsForm` is the test that picks the route. It is syntactic and it holds of
+exactly the two shapes above, so a definition the term layer decodes today is
+still decoded there. -/
+
+/-- Whether the body of a concrete definition is a node the term decoder has no
+image for: a quantified formula, or an application of a definition written over
+type parameters. -/
+def defBodyIsForm (T : DecodeTables) (body : Json) : Bool :=
+  match body.getObjValAs? String "kind" with
+  | .ok "Fquant" =>
+    match body.getObjValAs? String "quant" with
+    | .ok q => q == "Lforall" || q == "Lexists"
+    | _ => false
+  | .ok "Fapp" =>
+    match appHeadPath body with
+    | .ok p => (List.lookup p T.polyOpPaths).isSome
+    | .error _ => false
+  | _ => false
 
 /-! ## Formulas and probabilities
 
@@ -2000,7 +2123,13 @@ def decodeForm (F : FormTables) (j : Json) : Except String EcForm :=
           | .ok b => .ok (.holds b)
     else if kind = "Fapp" then
       match appHeadPath j with
-      | .error e => .error e
+      | .error _ =>
+        -- A head that is not an operator is a quantified function applied to an
+        -- argument, which the term layer reads; the formula is that the boolean
+        -- it denotes holds.
+        match decodeTerm F .bool j with
+        | .error e => .error e
+        | .ok b => .ok (.holds b)
       | .ok p =>
         match _hfa : getArr j "args" with
         | .error e => .error e
@@ -2110,9 +2239,46 @@ def decodeForm (F : FormTables) (j : Json) : Except String EcForm :=
               -- value arguments go into the body before the body is decoded.
               match _hpp : List.lookup p F.tables.polyOpPaths with
               | none =>
-                match decodeTerm F .bool j with
-                | .error e => .error e
-                | .ok b => .ok (.holds b)
+                -- A concrete definition whose body is a formula the term layer
+                -- has no image for is read here: the arguments are decoded as
+                -- terms, the parameters are bound at the read site, and the body
+                -- is decoded as a formula against the tables with this
+                -- definition dropped. Every other body takes the term route.
+                match _hdf : List.lookup p F.tables.defOpPaths with
+                | some d =>
+                  if defBodyIsForm F.tables d.body then
+                    match arr.toList.mapM (fun x =>
+                        match decodeTyField F.tables x "ty" with
+                        | .error e => Except.error e
+                        | .ok u =>
+                          match decodeTerm F u x with
+                          | .error e => Except.error e
+                          | .ok xe => Except.ok (Sigma.mk u xe)) with
+                    | .error e => .error e
+                    | .ok vs =>
+                      if vs.map Sigma.fst = d.params.map Prod.snd then
+                        match _hbf : bindOpParams (F.withoutDefOp p) p d.params with
+                        | .error e => .error e
+                        | .ok F' =>
+                          match decodeForm F' d.body with
+                          | .error m =>
+                            fail s!"the operator '{p}' is defined by a form that \
+                              does not decode: {m}"
+                          | .ok bf =>
+                            .ok (wrapOpLetsF
+                              ((d.params.map (fun q => opParamName q.1)).zip vs) bf)
+                      else
+                        fail s!"the operator '{p}' is defined at argument types \
+                          {repr (d.params.map Prod.snd)} and applied to arguments \
+                          of types {repr (vs.map Sigma.fst)}"
+                  else
+                    match decodeTerm F .bool j with
+                    | .error e => .error e
+                    | .ok b => .ok (.holds b)
+                | none =>
+                  match decodeTerm F .bool j with
+                  | .error e => .error e
+                  | .ok b => .ok (.holds b)
               | some pd =>
                 match polyTyArgs F.tables pd j with
                 | .error e => .error e
@@ -2133,17 +2299,20 @@ def decodeForm (F : FormTables) (j : Json) : Except String EcForm :=
       match decodeTerm F .bool j with
       | .error e => .error e
       | .ok b => .ok (.holds b)
-termination_by (F.tables.polyOpPaths.length, jsonSize j)
+termination_by (F.tables.defOpPaths.length, F.tables.polyOpPaths.length, jsonSize j)
 decreasing_by
   all_goals first
-    | exact Prod.Lex.right _ (getObj_decreases (by assumption))
-    | exact Prod.Lex.right _
-        (getArr_decreases (by assumption) (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
+    | exact Prod.Lex.right _ (Prod.Lex.right _ (getObj_decreases (by assumption)))
+    | exact Prod.Lex.right _ (Prod.Lex.right _
+        (getArr_decreases (by assumption) (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)))
     | (rw [bindLocal_tables (by assumption)]
-       exact Prod.Lex.right _ (getObj_decreases (by assumption)))
+       exact Prod.Lex.right _ (Prod.Lex.right _ (getObj_decreases (by assumption))))
     | (rw [bindBinders_tables (by assumption)]
-       exact Prod.Lex.right _ (getObj_decreases (by assumption)))
-    | exact Prod.Lex.left _ _ (expandPolyAt_length_lt_of_eq _ _ _ (by assumption))
+       exact Prod.Lex.right _ (Prod.Lex.right _ (getObj_decreases (by assumption))))
+    | exact Prod.Lex.right _
+        (Prod.Lex.left _ _ (expandPolyAt_length_lt_of_eq _ _ _ (by assumption)))
+    | (rw [bindOpParams_tables (by assumption)]
+       exact Prod.Lex.left _ _ (withoutDefOp_length_lt_of_eq _ _ (by assumption)))
 
 /-- Decode a Hoare postcondition. It is an `exnpost`: a normal-exit formula and
 one formula per exception branch, and `EcForm` has no exception
@@ -2159,8 +2328,8 @@ def decodeExnPost (F : FormTables) (q : String) (j : Json) : Except String EcFor
       match _hmain : getObj j "main" with
       | .error e => .error e
       | .ok mainJ => decodeForm F mainJ
-termination_by (F.tables.polyOpPaths.length, jsonSize j)
-decreasing_by exact Prod.Lex.right _ (getObj_decreases _hmain)
+termination_by (F.tables.defOpPaths.length, F.tables.polyOpPaths.length, jsonSize j)
+decreasing_by exact Prod.Lex.right _ (Prod.Lex.right _ (getObj_decreases _hmain))
 
 /-- Decode a real-valued formula node as a probability expression. -/
 def decodeProb (F : FormTables) (j : Json) : Except String EcProb :=
@@ -2244,12 +2413,12 @@ def decodeProb (F : FormTables) (j : Json) : Except String EcProb :=
                 absolute difference, and nothing else"
     else
       fail s!"the node kind '{kind}' in probability position in {j.compress}"
-termination_by (F.tables.polyOpPaths.length, jsonSize j)
+termination_by (F.tables.defOpPaths.length, F.tables.polyOpPaths.length, jsonSize j)
 decreasing_by
   all_goals first
-    | exact Prod.Lex.right _ (getObj_decreases _hev)
-    | exact Prod.Lex.right _
-        (getArr_decreases _hpa (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
+    | exact Prod.Lex.right _ (Prod.Lex.right _ (getObj_decreases _hev))
+    | exact Prod.Lex.right _ (Prod.Lex.right _
+        (getArr_decreases _hpa (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)))
 
 /-- Decode the event of a `Pr[…]` node. Its memory is the post-state the
 procedure leaves, which is the judgement's own memory. -/
@@ -2260,8 +2429,8 @@ def decodeProbEvent (F : FormTables) (j : Json) : Except String EcForm :=
     match _hpe : getObj j "form" with
     | .error e => .error e
     | .ok formJ => decodeForm (F.bindMemStamp st (.side .cur)) formJ
-termination_by (F.tables.polyOpPaths.length, jsonSize j)
-decreasing_by exact Prod.Lex.right _ (getObj_decreases _hpe)
+termination_by (F.tables.defOpPaths.length, F.tables.polyOpPaths.length, jsonSize j)
+decreasing_by exact Prod.Lex.right _ (Prod.Lex.right _ (getObj_decreases _hpe))
 
 /-- Decode the argument of an absolute value as the difference of two
 probabilities it must be. -/
@@ -2285,11 +2454,11 @@ def decodeProbDiff (F : FormTables) (j : Json) : Except String EcProb :=
             | .error e => .error e
             | .ok b => .ok (.absDiff a b)
         | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
-termination_by (F.tables.polyOpPaths.length, jsonSize j)
+termination_by (F.tables.defOpPaths.length, F.tables.polyOpPaths.length, jsonSize j)
 decreasing_by
   all_goals
-    exact Prod.Lex.right _
-      (getArr_decreases _hda (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
+    exact Prod.Lex.right _ (Prod.Lex.right _
+      (getArr_decreases _hda (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)))
 
 /-- Decode the negated side of the difference under an absolute value. -/
 def decodeProbNeg (F : FormTables) (j : Json) : Except String EcProb :=
@@ -2307,11 +2476,11 @@ def decodeProbNeg (F : FormTables) (j : Json) : Except String EcProb :=
         match arr.toList.attach with
         | [⟨x, _⟩] => decodeProb F x
         | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
-termination_by (F.tables.polyOpPaths.length, jsonSize j)
+termination_by (F.tables.defOpPaths.length, F.tables.polyOpPaths.length, jsonSize j)
 decreasing_by
   all_goals
-    exact Prod.Lex.right _
-      (getArr_decreases _hna (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
+    exact Prod.Lex.right _ (Prod.Lex.right _
+      (getArr_decreases _hna (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)))
 
 end
 
@@ -3100,6 +3269,33 @@ private def jFormIntPair : Json :=
 #guard (Int.ediv (-7) 2, Int.emod (-7) 2) == ((-4 : Int), (1 : Int))
 #guard (Int.ediv (-7) (-2), Int.emod (-7) (-2)) == ((4 : Int), (1 : Int))
 #guard (Int.ediv 5 0, Int.emod 5 0) == ((0 : Int), (5 : Int))
+
+-- The absolute value and the greatest common divisor decode at the `int` code.
+#guard (match decodeTerm bareTables .int
+            (jFormIntApp jFormInt "Top.CoreInt.absz" #[jFormIntLit "-3"]) with
+        | .ok (.intAbsz a) => isIntLit a (-3)
+        | _ => false)
+#guard (match decodeTerm bareTables .int
+            (jFormIntApp jFormInt "Top.gcd"
+              #[jFormIntLit "-4", jFormIntLit "-6"]) with
+        | .ok (.intGcd a b) => isIntLit a (-4) && isIntLit b (-6)
+        | _ => false)
+
+-- `absz` is EasyCrypt's `fun x => (0 <= x) ? x : -x`: non-negative everywhere,
+-- fixed at `0`, and the negation on the negatives.
+#guard (Int.natAbs 0 : Int) == (0 : Int)
+#guard (Int.natAbs 3 : Int) == (3 : Int)
+#guard (Int.natAbs (-3) : Int) == (3 : Int)
+
+-- `gcd` at the values its EasyCrypt characterization pins directly: `0` at the
+-- pair `(0, 0)` its guard singles out, the absolute value when one argument is
+-- `0`, `1` at an argument `1`, and invariant under either sign.
+#guard (Int.gcd 0 0 : Int) == (0 : Int)
+#guard (Int.gcd 0 (-5) : Int) == (5 : Int)
+#guard (Int.gcd (-5) 0 : Int) == (5 : Int)
+#guard (Int.gcd 1 (-7) : Int) == (1 : Int)
+#guard (Int.gcd (-4) (-6) : Int) == (2 : Int)
+#guard (Int.gcd 4 6 : Int) == (Int.gcd (-4) 6 : Int)
 
 -- The order comparison decodes at the `bool` code.
 #guard (match decodeTerm bareTables .bool
@@ -4487,6 +4683,267 @@ private def jCanReadArity : Json := jMaxApp jFormBool jCanHead #[jCanLam2, jCanL
 #guard (match decodeForm cancelTables jCanReadArity with
         | .error m =>
           (m.splitOn "application of a head of kind 'Fquant'").length > 1
+        | _ => false)
+
+/-! ### A concrete definition whose body reads a definition over type parameters
+
+`prelude/Logic.ec` declares
+
+```
+op injective ['a 'b] (f : 'a -> 'b) = forall x y, f x = f y => x = y.
+```
+
+and `algebra/Ring.ec` declares, in each of its ring theories,
+
+```
+op lreg (x : t) = injective (fun y => x * y).
+```
+
+The nodes below are the exporter's payload for the two, at the stamps and the
+type-parameter order the export writes. `lreg`'s parameter and result types are
+codes, so it registers as a concrete definition, and its body is an application
+of a definition over type parameters, which the term layer has no image for: a
+read of `lreg` in formula position is decoded as a formula. -/
+
+/-- The type parameters of `injective`. -/
+private def jInjB : Json := jTvar "'b" 1872
+private def jInjA : Json := jTvar "'a" 1873
+
+/-- The type of `injective`'s value parameter, `'a -> 'b`. -/
+private def jInjFTy : Json := jTyArrow jInjA jInjB
+
+private def jInjF : Json := jMaxLocal jInjFTy "f" 1874
+private def jInjX : Json := jMaxLocal jInjA "x" 1876
+private def jInjY : Json := jMaxLocal jInjA "y" 1878
+
+/-- `forall x y, f x = f y => x = y`, the body `injective`'s lambda binds. -/
+private def jInjBody : Json :=
+  Json.mkObj
+    [("ty", jFormBool), ("kind", Json.str "Fquant"),
+     ("quant", Json.str "Lforall"),
+     ("binders", Json.arr #[jMaxBinder "x" 1876 jInjA, jMaxBinder "y" 1878 jInjA]),
+     ("body", jMaxApp jFormBool
+       (jMaxOpNode (jMaxFun2 jFormBool jFormBool jFormBool) "Top.Pervasive.=>" #[])
+       #[jMaxApp jFormBool
+           (jMaxOpNode (jMaxFun2 jInjB jInjB jFormBool) "Top.Pervasive.=" #[jInjB])
+           #[jMaxApp jInjB jInjF #[jInjX], jMaxApp jInjB jInjF #[jInjY]],
+         jMaxApp jFormBool
+           (jMaxOpNode (jMaxFun2 jInjA jInjA jFormBool) "Top.Pervasive.=" #[jInjA])
+           #[jInjX, jInjY]])]
+
+/-- The `Th_operator` item `Top.injective`. -/
+def jInjectiveOp : Json :=
+  Json.mkObj [("kind", Json.str "Th_operator"), ("name", Json.str "injective"),
+    ("path", Json.str "Top.injective"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[Json.str "'b", Json.str "'a"]),
+       ("ty", jTyArrow jInjFTy jFormBool),
+       ("body", Json.mkObj
+         [("kind", Json.str "OP_Plain"),
+          ("form", Json.mkObj
+            [("ty", jTyArrow jInjFTy jFormBool),
+             ("kind", Json.str "Fquant"), ("quant", Json.str "Llambda"),
+             ("binders", Json.arr #[jMaxBinder "f" 1874 jInjFTy]),
+             ("body", jInjBody)])])])]
+
+/-- The carrier `lreg` is declared over. -/
+private def jLregTy : Json := jTyNode "Top.t"
+
+/-- The signature the multiplication's declared type gives it. -/
+private def lregMulSig : EcSig :=
+  ⟨.prod (.opaque "Top.t") (.opaque "Top.t"), .opaque "Top.t"⟩
+
+/-- `fun y => x * y`, the argument `lreg`'s body reads `injective` at. -/
+private def jLregLam : Json :=
+  Json.mkObj
+    [("ty", jTyArrow jLregTy jLregTy), ("kind", Json.str "Fquant"),
+     ("quant", Json.str "Llambda"),
+     ("binders", Json.arr #[jMaxBinder "y" 11042 jLregTy]),
+     ("body", jMaxApp jLregTy
+       (jMaxOpNode (jMaxFun2 jLregTy jLregTy jLregTy) "Top.mul" #[])
+       #[jMaxLocal jLregTy "x" 11041, jMaxLocal jLregTy "y" 11042])]
+
+/-- The `Th_operator` item `Top.lreg`. -/
+def jLregOp : Json :=
+  Json.mkObj [("kind", Json.str "Th_operator"), ("name", Json.str "lreg"),
+    ("path", Json.str "Top.lreg"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("ty", jTyArrow jLregTy jFormBool),
+       ("body", Json.mkObj
+         [("kind", Json.str "OP_Plain"),
+          ("form", Json.mkObj
+            [("ty", jTyArrow jLregTy jFormBool),
+             ("kind", Json.str "Fquant"), ("quant", Json.str "Llambda"),
+             ("binders", Json.arr #[jMaxBinder "x" 11041 jLregTy]),
+             ("body", jMaxApp jFormBool
+               (jMaxOpNode (jTyArrow (jTyArrow jLregTy jLregTy) jFormBool)
+                 "Top.injective" #[jLregTy, jLregTy])
+               #[jLregLam])])])])]
+
+/-- The `Th_axiom` item `Top.lregV`, the statement `forall a, lreg a`. -/
+def jLregVItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "lregV"),
+    ("path", Json.str "Top.lregV"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jFormBool), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jMaxBinder "a" 11050 jLregTy]),
+          ("body", jMaxApp jFormBool
+            (jMaxOpNode (jTyArrow jLregTy jFormBool) "Top.lreg" #[])
+            #[jMaxLocal jLregTy "a" 11050])])])]
+
+/-- The tables the lemma decodes against: the carrier at the opaque code, the
+multiplication at the signature its declared type gives it, and the two
+definitions. -/
+private def lregTables : FormTables :=
+  formTables
+    ((registerThOperators (registerThTypes ecPrelude [jAbsTypeDecl "t" "Top.t"])
+        [jInjectiveOp, jLregOp]).withAbstractOp "Top.mul" lregMulSig) []
+
+-- `injective` registers over its type parameters and `lreg` as a definition
+-- whose types are codes already.
+#guard lregTables.tables.polyOpPaths.map Prod.fst == ["Top.injective"]
+#guard lregTables.tables.defOpPaths.map Prod.fst == ["Top.lreg"]
+
+-- `lreg`'s body applies a definition over type parameters, one of the two shapes
+-- the term layer has no image for.
+#guard (match List.lookup "Top.lreg" lregTables.tables.defOpPaths with
+        | some d => defBodyIsForm lregTables.tables d.body
+        | none => false)
+
+-- The read decodes to the definition's body under one `letF` per parameter, and
+-- that body to the quantified formula the definition it reads expands to.
+#guard (match decodeAxiom lregTables jLregVItem with
+        | .ok (.allTy _ "a"
+                 (.letF "x_11041" (.var _ "a")
+                   (.allTy _ "x" (.allTy _ "y"
+                     (.imp (.eqT _ _) (.eqT (.var _ "x") (.var _ "y"))))))) => true
+        | _ => false)
+
+-- The multiplication the argument names is the operator the expanded statement
+-- reads, and assembling the statement binds it.
+#guard (match decodeAxiom lregTables jLregVItem with
+        | .ok f =>
+          (match f.assembleParams with
+           | .allOp "Top.mul" s _ => s == lregMulSig
+           | _ => false)
+            && EcForm.opsOf f.assembleParams == []
+        | _ => false)
+
+-- Without the definition over type parameters the same read has no formula
+-- route, and the term layer names the path the body applies.
+#guard (match decodeAxiom
+            (formTables ((registerThOperators
+              (registerThTypes ecPrelude [jAbsTypeDecl "t" "Top.t"])
+                [jLregOp]).withAbstractOp "Top.mul" lregMulSig) [])
+            jLregVItem with
+        | .error m => (m.splitOn "Top.injective").length > 1
+        | _ => false)
+
+/-- The `Th_axiom` item `Top.xorHolds`, the statement `forall b1 b2, b1 ^^ b2`:
+a read of a concrete definition in formula position whose body is an application
+of the prelude's equality. -/
+def jXorHoldsItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "xorHolds"),
+    ("path", Json.str "Top.xorHolds"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jXorBoolTy), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jXorBinder "b1" 32541, jXorBinder "b2" 32543]),
+          ("body", jXorApp jXorOpNode
+            #[jXorLocal "b1" 32541, jXorLocal "b2" 32543])])])]
+
+-- That body is neither quantified nor an application of a definition over type
+-- parameters, so the read takes the term route and the formula is the term
+-- holding.
+#guard (match List.lookup "Top.^^" xorTables.tables.defOpPaths with
+        | some d => !defBodyIsForm xorTables.tables d.body
+        | none => false)
+
+#guard (match decodeAxiom xorTables jXorHoldsItem with
+        | .ok (.allTy .bool "b1" (.allTy .bool "b2"
+                 (.holds (.letIn "b1_32499" _
+                   (.letIn "b2_32500" _ (.beq _ (.bnot _))))))) => true
+        | _ => false)
+
+/-! ### A statement that quantifies over a function and applies it
+
+`datatypes/Int.ec` declares
+
+```
+op iter ['a] : int -> ('a -> 'a) -> 'a -> 'a.
+lemma iter1 ['a] (opr : 'a -> 'a) (x : 'a) : iter 1 opr x = opr x.
+```
+
+The nodes below are the exporter's payload for the lemma: a `Lforall` binder
+whose `GTty` type is a `Tfun`, and a body equating a read of the declared `iter`
+with an `Fapp` whose head is the `Flocal` that binder bound. The right-hand side
+is the shape this file's higher-order route decodes — a function quantified over
+and applied, with no lambda anywhere. -/
+
+/-- The type parameter of the statement, at the stamp the export writes. -/
+private def jIterTvar : Json := jTvar "'a" 6503
+
+/-- The type of the quantified function, `'a -> 'a`. -/
+private def jIterFunTy : Json := jTyArrow jIterTvar jIterTvar
+
+/-- The signature `iter`'s declared type gives it at the assignment `'a := int`:
+the three arguments as the right-nested product, and the carrier as the result. -/
+private def iterSig : EcSig :=
+  ⟨.prod .int (.prod (.arrow .int .int) .int), .int⟩
+
+/-- The `Th_axiom` item `Top.IterOp.iter1`. -/
+private def jIter1Item : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "iter1"),
+    ("path", Json.str "Top.IterOp.iter1"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[Json.str "'a"]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jFormBool), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jMaxBinder "opr" 6505 jIterFunTy,
+                                 jMaxBinder "x" 6506 jIterTvar]),
+          ("body", jMaxApp jFormBool
+            (jMaxOpNode (jMaxFun2 jIterTvar jIterTvar jFormBool)
+              "Top.Pervasive.=" #[jIterTvar])
+            #[jMaxApp jIterTvar
+                (jMaxOpNode (jTyArrow jFormInt (jTyArrow jIterFunTy jIterFunTy))
+                  "Top.IterOp.iter" #[jIterTvar])
+                #[Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"),
+                              ("value", Json.str "1")],
+                  jMaxLocal jIterFunTy "opr" 6505,
+                  jMaxLocal jIterTvar "x" 6506],
+              jMaxApp jIterTvar (jMaxLocal jIterFunTy "opr" 6505)
+                #[jMaxLocal jIterTvar "x" 6506]])])])]
+
+/-- The tables the lemma decodes against: `iter` at the signature its declared
+type gives it, at the assignment the guards below read the statement at. -/
+private def iterTables : FormTables :=
+  formTables (ecPrelude.withAbstractOp "Top.IterOp.iter" iterSig) []
+
+-- The binder's type is a function type, so the statement quantifies at an arrow
+-- code, and the right-hand side is that variable applied to the second binder.
+#guard (match decodeAxiomAt iterTables [.int] jIter1Item with
+        | .ok (.allTy (.arrow .int .int) "opr"
+                 (.allTy .int "x"
+                   (.eqT _ (.app (.var _ "opr") (.var _ "x"))))) => true
+        | _ => false)
+
+-- The left-hand side is the declared operator applied to the three arguments as
+-- the right-nested pair, the function among them.
+#guard (match decodeAxiomAt iterTables [.int] jIter1Item with
+        | .ok (.allTy _ "opr" (.allTy _ "x" (.eqT lhs _))) =>
+          lhs.opAppOf == some ("Top.IterOp.iter", iterSig)
+        | _ => false)
+
+-- The statement reads that one operator and binds none, so assembling it binds
+-- exactly the operator.
+#guard (match decodeAxiomAt iterTables [.int] jIter1Item with
+        | .ok f => EcForm.opsOf f == [("Top.IterOp.iter", iterSig)]
         | _ => false)
 
 end Golden

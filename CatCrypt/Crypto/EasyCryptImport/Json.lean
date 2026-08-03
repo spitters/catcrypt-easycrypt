@@ -140,7 +140,7 @@ writes, is the shape with no such choice in it.
   `dbin`, `duniform` over a list, `dlist`, `dfun`, `dopt`, `dfold`, `dinter` —
   each rejected by path.
 * `Eif`, `Elet`, `Ematch`, `Smatch`, `Sraise`, `Sabstract`,
-  `FBabs`, `Tfun`, nested modules, module parameters, and tuple expressions
+  `FBabs`, nested modules, module parameters, and tuple expressions
   of arity above two (the tuple *type* decodes as a right-nested product, but
   `Etuple` and `Eproj` stay binary): each is rejected with a message naming
   the construct. `Equant` is rejected in expression position, and decodes only
@@ -318,6 +318,10 @@ inductive EcOpKind where
   /-- Euclidean division, EasyCrypt's `edivz`, whose result is the quotient and
   the remainder as a pair. -/
   | intEdivz
+  /-- The absolute value, EasyCrypt's `absz`. -/
+  | intAbsz
+  /-- The greatest common divisor, EasyCrypt's `gcd`. -/
+  | intGcd
   /-- The integer order, `a ≤ b`. -/
   | intLe
   /-- The strict integer order, decoded through `¬ (b ≤ a)`. -/
@@ -543,6 +547,8 @@ def ecPrelude : DecodeTables where
      ("Top.CoreInt.mul", .intMul),
      ("Top.CoreInt.opp", .intOpp),
      ("Top.IntDiv.edivz", .intEdivz),
+     ("Top.CoreInt.absz", .intAbsz),
+     ("Top.gcd", .intGcd),
      ("Top.CoreInt.le", .intLe),
      ("Top.CoreInt.lt", .intLt),
      ("Top.FMap._.[_<-_]", .mapSet),
@@ -837,6 +843,19 @@ def decodeTy (T : DecodeTables) (j : Json) : Except String EcTy :=
           fail s!"tuple type of arity 1: the exporter writes no such node, so \
             it has no image"
         | a :: rest => .ok (nestTuple a rest)
+  | .ok "Tfun" =>
+    match _hdom : getObj j "dom" with
+    | .error e => .error e
+    | .ok domJ =>
+      match _hcod : getObj j "cod" with
+      | .error e => .error e
+      | .ok codJ =>
+        match decodeTy T domJ with
+        | .error e => .error e
+        | .ok a =>
+          match decodeTy T codJ with
+          | .error e => .error e
+          | .ok b => .ok (.arrow a b)
   | .ok "Unsupported" => fail (unsupportedMsg j)
   | .ok "Tvar" =>
     match getStr j "name" with
@@ -853,6 +872,8 @@ decreasing_by
   all_goals first
     | exact getArr_decreases _hargs (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
     | exact getArr_decreases _harr (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
+    | exact getObj_decreases _hdom
+    | exact getObj_decreases _hcod
 
 /-- Decode the type node the field `k` of `j` holds. -/
 def decodeTyField (T : DecodeTables) (j : Json) (k : String) : Except String EcTy := do
@@ -1137,6 +1158,23 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                       match decodeExpr T .int y with
                       | .error e => .error e
                       | .ok ye => .ok (.intEdivz xe ye)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .intAbsz, .int =>
+                  match arr.toList.attach with
+                  | [⟨x, _⟩] =>
+                    match decodeExpr T .int x with
+                    | .error e => .error e
+                    | .ok xe => .ok (.intAbsz xe)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .intGcd, .int =>
+                  match arr.toList.attach with
+                  | [⟨x, _⟩, ⟨y, _⟩] =>
+                    match decodeExpr T .int x with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T .int y with
+                      | .error e => .error e
+                      | .ok ye => .ok (.intGcd xe ye)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                 | .intLe, .bool =>
                   match arr.toList.attach with
@@ -3132,8 +3170,10 @@ the declaration decodes at the signature the declaration registers. -/
 /-- The argument type codes and the result type code an operator's declared type
 gives it: the domains of an arrow type, in source order, and the type the arrows
 land in. A type node that is no arrow is the type of a declaration of no
-argument, so it contributes no domain and is the result itself. A domain that is
-itself an arrow has no `EcTy` code and is rejected there, by `decodeTy`. -/
+argument, so it contributes no domain and is the result itself. The split is at
+the outermost arrows only: a domain that is itself an arrow keeps its own
+`EcTy.arrow` code, so an operator taking a function argument is at a signature
+whose argument code is that arrow. -/
 def decodeArrowTy (T : DecodeTables) (j : Json) :
     Except String (List EcTy × EcTy) :=
   match getStr j "kind" with
@@ -3212,9 +3252,9 @@ the argument codes `ds` its declared type gives.
 
 A definition of no argument is its form. A definition of arguments is written as
 a lambda, and it must bind exactly as many variables as the declared type takes
-arguments: a lambda of fewer binders leaves a function-typed body, and `EcTy` has
-no arrow code for one. Each binder carries its own type node, which must decode
-at the code the declared type gives that position. -/
+arguments: a lambda of fewer binders leaves a function-typed body, and `EcTerm`
+has no lambda to build one at. Each binder carries its own type node, which must
+decode at the code the declared type gives that position. -/
 def decodeOpDefnParams (T : DecodeTables) (path : String) (ds : List EcTy)
     (j : Json) : Except String (List (EcVarId × EcTy) × Json) := do
   match ds with
@@ -4171,6 +4211,23 @@ end PseudoRF.
 def jTyArrow (a b : Json) : Json :=
   Json.mkObj [("kind", Json.str "Tfun"), ("dom", a), ("cod", b)]
 
+-- A `Tfun` node decodes at the arrow code of its domain and its codomain.
+#guard (match decodeTy ecPrelude (jTyArrow jInt jBool) with
+        | .ok (.arrow .int .bool) => true
+        | _ => false)
+
+-- The node nests to the right, as the exporter writes a curried type.
+#guard (match decodeTy ecPrelude (jTyArrow jInt (jTyArrow jBool jInt)) with
+        | .ok (.arrow .int (.arrow .bool .int)) => true
+        | _ => false)
+
+-- No equality test and no uniform sampling lives at an arrow code, whatever its
+-- domain and codomain are.
+#guard (EcTy.arrow .int .bool).hasEq == false
+#guard (EcTy.arrow .bool .bool).hasEq == false
+#guard (EcTy.arrow .bool .bool).isFin == false
+#guard (EcTy.arrow (.fin 2) (.fin 3)).isFin == false
+
 /-- The `Th_type` item declaring the abstract type `name` at `path`. -/
 def jAbsTypeDecl (name path : String) : Json :=
   Json.mkObj [("kind", Json.str "Th_type"), ("name", Json.str name),
@@ -4326,14 +4383,17 @@ private def jZRUnitPred : Json :=
             p == "Top.ZR.unit" && s == { arg := .opaque "Top.ZR.t", res := .bool }
         | _ => false)
 
--- A declaration whose argument is itself a function is rejected: an arrow has no
--- EcTy code, so the argument has none to be a component of.
+-- A declaration whose argument is itself a function is at the signature whose
+-- argument code is that function type: only the outermost arrows are the
+-- declaration's own arguments.
 #guard (match decodeThOperatorAbstract prfTyTables
             (jOpDecl "h" "Top.h"
               (jTyArrow (jTyArrow (jTyConstr "Top.D") (jTyConstr "Top.R"))
                 (jTyConstr "Top.R")) "Abstract") with
-        | .error m => m.startsWith
-            "ec-import: unsupported type node kind 'Tfun'"
+        | .ok (p, s) =>
+            p == "Top.h"
+              && s == { arg := .arrow (.opaque "Top.D") (.opaque "Top.R"),
+                        res := .opaque "Top.R" }
         | _ => false)
 
 -- A polymorphic declaration is rejected by its type parameters.
@@ -4603,7 +4663,7 @@ private def jPolySubtype : Json :=
             (jTyConstr "Top.Poly.poly") with
         | .error m => m.startsWith
             "ec-import: type path 'Top.Poly.poly' names a subtype the ingestion \
-             holds no code for: unsupported type node kind 'Tfun'"
+             holds no code for: unknown type path 'Top.Poly.coeff'"
         | _ => false)
 
 -- No realization gives it a code: the bound of the recognised predicate is not
@@ -5648,6 +5708,26 @@ private def jOpApp (ty : Json) (p : String) (args : Array Json) : Json :=
             (Json.mkObj [("ty", jBool), ("kind", Json.str "Eop"),
                          ("path", Json.str "Top.FMap.empty"),
                          ("targs", Json.arr #[jInt, jBool])]) with
+        | .error _ => true
+        | _ => false)
+
+-- The absolute value and the greatest common divisor decode at the `int` code.
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.CoreInt.absz" #[jIntLit "-3"]) with
+        | .ok (.intAbsz a) => litIsInt a (-3)
+        | _ => false)
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.gcd" #[jIntLit "-4", jIntLit "-6"]) with
+        | .ok (.intGcd a b) => litIsInt a (-4) && litIsInt b (-6)
+        | _ => false)
+
+-- Both are rejected at the wrong arity, rather than read at a shorter one.
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.CoreInt.absz" #[jIntLit "1", jIntLit "2"]) with
+        | .error _ => true
+        | _ => false)
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.gcd" #[jIntLit "1"]) with
         | .error _ => true
         | _ => false)
 

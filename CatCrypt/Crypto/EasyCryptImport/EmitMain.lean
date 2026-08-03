@@ -97,10 +97,24 @@ Four decisions the mode makes:
 * **A directory that cannot be read raises**, as an unreadable file does under
   `--survey`. That is a caller error about the argument, not a measurement.
 
-Nothing is retained between envelopes: the decode tables, the parsed JSON and
-the report lines of one envelope are dropped at the end of its iteration, and
-only the five counters cross it. The peak is therefore the largest single
-envelope, not the corpus.
+The mode reads the corpus twice: a first pass registers the type and operator
+declarations of every envelope into one set of tables, and the survey then
+decodes each envelope against them. The two passes are what make a use of a
+declaration meet its declaration, since a client of a theory names what it reads
+and the theory's own envelope declares it.
+
+The two spellings of a path are both reachable. An envelope roots its own
+top-level items at `Top` while a client qualifies them by the theory's name, read
+off the file stem (`algebra__IntDiv.ec.json` is `IntDiv`), so the first pass
+carries each declaration to the qualified path a client writes
+(`qualifyTopPath`), and the survey of an envelope reads the tables' entries under
+its own theory at the bare paths it writes (`unqualifyTopPath`). Both are copies
+appended behind what is already there, so an entry a declaration puts at a path
+wins the lookup over every copy.
+
+What is retained between envelopes is those tables and the five counters: the
+parsed JSON and the report lines of one envelope are dropped at the end of its
+iteration.
 
 A third mode writes one `Th_axiom` item of an envelope as a statement — the
 imported proposition and its shallow reading — instead of a program:
@@ -176,10 +190,11 @@ lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
 The tables `main` decodes against are `ecPrelude`, the paths of EasyCrypt's
 boolean and unit prelude. The survey additionally registers the envelope's own
 abstract types (`registerThTypes`) before decoding, so an item may mention a
-`type pkey.` declared alongside it. A source that uses a finite scalar type or
-a further uniform distribution needs `DecodeTables.withFinType` /
-`.withUniformDistr`, which no command line names: call `emitFromJson` from Lean
-with the extended tables.
+`type pkey.` declared alongside it. The directory mode extends them further with
+the corpus's own declarations, under both path spellings. A source that uses a
+finite scalar type or a further uniform distribution needs
+`DecodeTables.withFinType` / `.withUniformDistr`, which no command line names:
+call `emitFromJson` from Lean with the extended tables.
 -/
 
 set_option autoImplicit false
@@ -535,16 +550,50 @@ def envelopeTheoryName (name : String) : String :=
   (stem.splitOn ".").headD stem
 
 /-- The path a top-level item of the theory `th` carries outside its own
-envelope. An envelope roots the items it declares itself at `Top`, while every
-client writes them under the theory's name, so `Top.associative` of `Logic.ec` is
-`Top.Logic.associative` everywhere it is read. An item of an inner theory is
-already fully qualified, which is why only a single segment after `Top.` is
-qualified. -/
+envelope: `th` inserted behind `Top.`. An envelope roots the items it declares
+itself at `Top`, while every client writes them under the theory's name, so
+`Top.associative` of `Logic.ec` is `Top.Logic.associative` everywhere it is read,
+and the inner-theory item `Top.IterOp.iterop` of `Int.ec` is
+`Top.Int.IterOp.iterop`. A path outside `Top`, and `Top.` with nothing behind it,
+have no such reading. -/
 def qualifyTopPath (th : String) (p : String) : Option String :=
   if p.startsWith "Top." then
     let rest := p.drop 4
-    if rest.contains '.' then none else some ("Top." ++ th ++ "." ++ rest)
+    if rest.isEmpty then none else some ("Top." ++ th ++ "." ++ rest)
   else none
+
+/-- The path a client's spelling of an item of the theory `th` carries inside
+`th`'s own envelope: `th` dropped from behind `Top.`, so the ingestion's entry
+`Top.IntDiv.edivz` is `Top.edivz` where `IntDiv.ec` declares it. A path under
+another theory, and `Top.<th>.` with nothing behind it, have no such reading. -/
+def unqualifyTopPath (th : String) (p : String) : Option String :=
+  let pfx := "Top." ++ th ++ "."
+  if p.startsWith pfx then
+    let rest := p.drop pfx.length
+    if rest.isEmpty then none else some ("Top." ++ rest)
+  else none
+
+/-- The entries `new` holds and `old` did not. Registration extends a table in
+front, so the added entries are its leading segment. -/
+def entriesAdded {α : Type} (old new : List (String × α)) : List (String × α) :=
+  new.take (new.length - old.length)
+
+/-- The entries of `es` keyed again by the path the theory `th` gives them
+outside its own envelope. An entry whose path has no such reading is dropped. -/
+def theoryQualifiedCopies {α : Type} (th : String) (es : List (String × α)) :
+    List (String × α) :=
+  es.filterMap (fun e => (qualifyTopPath th e.1).map (fun q => (q, e.2)))
+
+/-- The entries of `es` keyed again by the path the theory `th` writes for them
+inside its own envelope. An entry under another theory is dropped. -/
+def theoryLocalCopies {α : Type} (th : String) (es : List (String × α)) :
+    List (String × α) :=
+  es.filterMap (fun e => (unqualifyTopPath th e.1).map (fun q => (q, e.2)))
+
+/-- The paths of `ps` written as the theory `th` writes them inside its own
+envelope. A path under another theory is dropped. -/
+def theoryLocalPaths (th : String) (ps : List String) : List String :=
+  ps.filterMap (unqualifyTopPath th)
 
 /-- The table `new`, followed by the entries it holds and `old` did not, keyed
 again by their theory-qualified paths.
@@ -554,11 +603,23 @@ envelope added are copied: `List.lookup` takes the first match, so an entry a
 declaration puts at a qualified path stays ahead of every alias. -/
 def aliasAddedEntries {α : Type} (th : String) (old new : List (String × α)) :
     List (String × α) :=
-  new ++ (new.take (new.length - old.length)).filterMap (fun e =>
-    (qualifyTopPath th e.1).map (fun q => (q, e.2)))
+  new ++ theoryQualifiedCopies th (entriesAdded old new)
+
+/-- The table `old`, followed by the entries `new` holds and it did not, keyed by
+their theory-qualified paths alone.
+
+A theory outside the prelude is read under its name, so the bare paths its own
+envelope writes are dropped here and only the qualified copies cross to the
+corpus's other envelopes. The copies are appended, as they are in
+`aliasAddedEntries`. -/
+def qualifyAddedEntries {α : Type} (th : String) (old new : List (String × α)) :
+    List (String × α) :=
+  old ++ theoryQualifiedCopies th (entriesAdded old new)
 
 /-- The tables `T'` an envelope's registration produced from `T`, with the
-declaration entries it added keyed again by their theory-qualified paths. -/
+declaration entries it added keyed again by their theory-qualified paths. The
+bare paths stay, which is what a prelude theory's declarations are read at
+wherever they are in scope. -/
 def aliasEnvelopeTheory (th : String) (T T' : DecodeTables) : DecodeTables :=
   { T' with
     tyPaths := aliasAddedEntries th T.tyPaths T'.tyPaths
@@ -567,21 +628,85 @@ def aliasEnvelopeTheory (th : String) (T T' : DecodeTables) : DecodeTables :=
     defOpPaths := aliasAddedEntries th T.defOpPaths T'.defOpPaths
     polyOpPaths := aliasAddedEntries th T.polyOpPaths T'.polyOpPaths }
 
+/-- The tables `T`, with the declaration entries an envelope's registration added
+to it keyed by their theory-qualified paths alone: what one envelope's items
+declare is reachable in another envelope at the path that one writes, and the
+bare paths of the declaring envelope do not cross. -/
+def qualifyEnvelopeTheory (th : String) (T T' : DecodeTables) : DecodeTables :=
+  { T with
+    tyPaths := qualifyAddedEntries th T.tyPaths T'.tyPaths
+    constPaths := qualifyAddedEntries th T.constPaths T'.constPaths
+    absOpPaths := qualifyAddedEntries th T.absOpPaths T'.absOpPaths
+    defOpPaths := qualifyAddedEntries th T.defOpPaths T'.defOpPaths
+    polyOpPaths := qualifyAddedEntries th T.polyOpPaths T'.polyOpPaths }
+
+/-- The tables an envelope of the theory `th` is surveyed against: `T`, followed
+by every entry of `T` under `th` keyed again by the path `th`'s own envelope
+writes for it. An envelope roots its own items at `Top`, so the entry a client
+reads as `Top.IntDiv.edivz` is read as `Top.edivz` inside `IntDiv.ec`, and the
+copy is what makes the ingestion's entry meet that spelling.
+
+The copies are appended, so an entry the tables already hold at a bare path wins
+the lookup. -/
+def unqualifyEnvelopeTheory (th : String) (T : DecodeTables) : DecodeTables :=
+  { T with
+    tyPaths := T.tyPaths ++ theoryLocalCopies th T.tyPaths
+    mapTyPaths := T.mapTyPaths ++ theoryLocalPaths th T.mapTyPaths
+    optionTyPaths := T.optionTyPaths ++ theoryLocalPaths th T.optionTyPaths
+    listTyPaths := T.listTyPaths ++ theoryLocalPaths th T.listTyPaths
+    fsetTyPaths := T.fsetTyPaths ++ theoryLocalPaths th T.fsetTyPaths
+    constPaths := T.constPaths ++ theoryLocalCopies th T.constPaths
+    emptyMapPaths := T.emptyMapPaths ++ theoryLocalPaths th T.emptyMapPaths
+    emptyFsetPaths := T.emptyFsetPaths ++ theoryLocalPaths th T.emptyFsetPaths
+    emptyListPaths := T.emptyListPaths ++ theoryLocalPaths th T.emptyListPaths
+    nonePaths := T.nonePaths ++ theoryLocalPaths th T.nonePaths
+    witnessPaths := T.witnessPaths ++ theoryLocalPaths th T.witnessPaths
+    opPaths := T.opPaths ++ theoryLocalCopies th T.opPaths
+    distrPaths := T.distrPaths ++ theoryLocalPaths th T.distrPaths
+    distrOpPaths := T.distrOpPaths ++ theoryLocalCopies th T.distrOpPaths
+    distrTyPaths := T.distrTyPaths ++ theoryLocalPaths th T.distrTyPaths
+    absOpPaths := T.absOpPaths ++ theoryLocalCopies th T.absOpPaths
+    defOpPaths := T.defOpPaths ++ theoryLocalCopies th T.defOpPaths
+    polyOpPaths := T.polyOpPaths ++ theoryLocalCopies th T.polyOpPaths }
+
 -- The theory name is the stem between the directory prefix and the first
 -- extension.
 #guard envelopeTheoryName "prelude__Logic.ec.json" == "Logic"
 #guard envelopeTheoryName "algebra__Bigalg.ec.json" == "Bigalg"
 
--- A top-level item takes the theory's name; an item already qualified by an
--- inner theory, and a path outside `Top`, take nothing.
+-- A top-level item takes the theory's name, whatever the path behind `Top.`
+-- holds: an item of a theory nested in the file's own is qualified by the file's
+-- theory as a single-segment one is. A path outside `Top`, and `Top.` with
+-- nothing behind it, take nothing.
 #guard qualifyTopPath "Logic" "Top.associative" == some "Top.Logic.associative"
-#guard qualifyTopPath "Logic" "Top.Pervasive.=" == none
+#guard qualifyTopPath "Int" "Top.IterOp.iterop" == some "Top.Int.IterOp.iterop"
 #guard qualifyTopPath "Logic" "Other.x" == none
+#guard qualifyTopPath "Logic" "Top." == none
+
+-- The client's spelling reads back to the one the declaring envelope writes,
+-- whatever follows the theory's name. A path under another theory, and the
+-- theory's own name with nothing behind it, read back to nothing.
+#guard unqualifyTopPath "IntDiv" "Top.IntDiv.edivz" == some "Top.edivz"
+#guard unqualifyTopPath "Int" "Top.Int.IterOp.iterop" == some "Top.IterOp.iterop"
+#guard unqualifyTopPath "IntDiv" "Top.CoreInt.add" == none
+#guard unqualifyTopPath "IntDiv" "Top.IntDiv." == none
+
+-- The two directions invert each other on the paths that have both readings.
+#guard ((qualifyTopPath "Int" "Top.IterOp.iterop").bind (unqualifyTopPath "Int"))
+  == some "Top.IterOp.iterop"
+#guard ((unqualifyTopPath "IntDiv" "Top.IntDiv.edivz").bind
+  (qualifyTopPath "IntDiv")) == some "Top.IntDiv.edivz"
 
 -- Only the entries this envelope added are copied, and the copies go behind
 -- what is already there.
 #guard aliasAddedEntries "Logic" [("Top.old", 1)] [("Top.new", 2), ("Top.old", 1)]
   == [("Top.new", 2), ("Top.old", 1), ("Top.Logic.new", 2)]
+
+-- The qualified-only form carries the same copies behind the table it started
+-- from, and the envelope's own bare paths do not cross.
+#guard qualifyAddedEntries "IntDiv" [("Top.old", 1)]
+    [("Top.new", 2), ("Top.old", 1)]
+  == [("Top.old", 1), ("Top.IntDiv.new", 2)]
 
 -- An entry a declaration puts at a qualified path is ahead of every alias, so
 -- it wins the lookup.
@@ -589,38 +714,95 @@ def aliasEnvelopeTheory (th : String) (T T' : DecodeTables) : DecodeTables :=
   (aliasAddedEntries "Logic" [("Top.old", 1)]
     [("Top.Logic.new", 3), ("Top.new", 2), ("Top.old", 1)])) == some 3
 
+-- The copies of the reverse direction also go behind what is already there, so
+-- an entry at a bare path wins over the copy of an entry under the theory.
+#guard theoryLocalCopies "IntDiv" [("Top.IntDiv.edivz", 1), ("Top.CoreInt.add", 2)]
+  == [("Top.edivz", 1)]
+
+#guard (List.lookup "Top.edivz"
+  ([("Top.edivz", 3)] ++ theoryLocalCopies "IntDiv" [("Top.IntDiv.edivz", 1)]))
+  == some 3
+
+-- The ingestion's own entry for EasyCrypt's Euclidean division is keyed at the
+-- path a client of `IntDiv.ec` writes, and inside that envelope it is reached at
+-- the bare path the envelope writes.
+#guard (List.lookup "Top.IntDiv.edivz" ecPrelude.opPaths).isSome
+#guard (List.lookup "Top.edivz" ecPrelude.opPaths).isNone
+#guard (List.lookup "Top.edivz"
+  (unqualifyEnvelopeTheory "IntDiv" ecPrelude).opPaths).isSome
+#guard (List.lookup "Top.IntDiv.edivz"
+  (unqualifyEnvelopeTheory "IntDiv" ecPrelude).opPaths).isSome
+
+-- A theory the tables hold nothing under leaves them as they are.
+#guard (unqualifyEnvelopeTheory "Absent" ecPrelude).opPaths == ecPrelude.opPaths
+
+-- The string-keyed tables read the same way: EasyCrypt's finite maps are
+-- declared in `FMap.ec`, whose own envelope writes the type at `Top.fmap`.
+#guard (unqualifyEnvelopeTheory "FMap" ecPrelude).mapTyPaths
+  == ["Top.FMap.fmap", "Top.fmap"]
+
+-- A prelude envelope's declaration crosses to the corpus's tables at both
+-- spellings, the bare one in front and the qualified copy behind.
+#guard ((aliasEnvelopeTheory "Logic" ecPrelude
+    (ecPrelude.withOpaqueType "Top.zz")).tyPaths.map Prod.fst)
+  == (["Top.zz"] ++ ecPrelude.tyPaths.map Prod.fst ++ ["Top.Logic.zz"])
+
+-- Every other envelope's declaration crosses at the qualified spelling alone.
+#guard ((qualifyEnvelopeTheory "IntDiv" ecPrelude
+    (ecPrelude.withOpaqueType "Top.zz")).tyPaths.map Prod.fst)
+  == (ecPrelude.tyPaths.map Prod.fst ++ ["Top.IntDiv.zz"])
+
+/-- The envelope the file `name` of `dir` holds, with an unreadable file, a JSON
+parse error and a failed schema guard alike reported as a message. -/
+def readEnvelopeOf (dir name : String) : IO (Except String EcExport) := do
+  let p := (dir : System.FilePath) / (name : System.FilePath)
+  let contents ← readFileOrError p
+  return contents.bind (surveyEnvelopeOf p.toString)
+
 /-- The tables every envelope of `dir` is surveyed against: the ingestion's own
 prelude, extended with the type and operator declarations of the corpus's prelude
-theories, each of those also under the path its theory's name gives it. A prelude
-envelope that does not read is skipped, leaving the tables it would have
-extended. -/
-def surveyPreludeTables (dir : String) (names : List String) :
+theories — each of those also under the path its theory's name gives it — and
+then with the declarations of every other envelope under their theory-qualified
+paths alone. An envelope that does not read is skipped, leaving the tables it
+would have extended.
+
+The prelude theories are registered in a pass of their own, before the rest, for
+two reasons: their declarations are in scope in every other envelope, so their
+bare paths belong to the shared tables, and a later envelope's declaration whose
+type mentions one of them decodes only once they are there. -/
+def surveyCorpusTables (dir : String) (names : List String) :
     IO DecodeTables := do
   let mut T := ecPrelude
   for n in names do
     if isPreludeEnvelope n then
-      let p := (dir : System.FilePath) / (n : System.FilePath)
-      let contents ← readFileOrError p
-      match contents.bind (surveyEnvelopeOf p.toString) with
+      match ← readEnvelopeOf dir n with
       | .error _ => pure ()
       | .ok e =>
         T := aliasEnvelopeTheory (envelopeTheoryName n) T
+          (registerThOperators (registerThTypes T e.items) e.items)
+  for n in names do
+    if !isPreludeEnvelope n then
+      match ← readEnvelopeOf dir n with
+      | .error _ => pure ()
+      | .ok e =>
+        T := qualifyEnvelopeTheory (envelopeTheoryName n) T
           (registerThOperators (registerThTypes T e.items) e.items)
   return T
 
 /-- Survey every `*.json` file of `dir` in this process, in ascending name order,
 printing each envelope's report lines and its `SURVEY` tally behind the file's
 stem, then the aggregate `SURVEY-ALL` line. Every envelope is surveyed against
-the corpus's prelude theories as well as the ingestion's own tables. A file that
-does not open, does not parse, or fails the schema guard prints `<stem> ERR
-envelope: <first line of the error>` and counts in the aggregate's `envelope err`
-bucket, and the remaining files are still surveyed. Returns `0` whatever the
-tally. A directory that cannot be read raises, as an unreadable file does under
-`--survey`. -/
+the corpus's own declarations as well as the ingestion's tables
+(`surveyCorpusTables`), and against those tables read at the path spellings its
+own theory writes (`unqualifyEnvelopeTheory`). A file that does not open, does
+not parse, or fails the schema guard prints `<stem> ERR envelope: <first line of
+the error>` and counts in the aggregate's `envelope err` bucket, and the
+remaining files are still surveyed. Returns `0` whatever the tally. A directory
+that cannot be read raises, as an unreadable file does under `--survey`. -/
 def surveyAllMain (dir : String) : IO UInt32 := do
   let entries ← System.FilePath.readDir dir
   let names := surveyJsonNames (entries.toList.map (·.fileName))
-  let T ← surveyPreludeTables dir names
+  let T ← surveyCorpusTables dir names
   let mut nFiles := 0
   let mut nBad := 0
   let mut nOk := 0
@@ -629,14 +811,14 @@ def surveyAllMain (dir : String) : IO UInt32 := do
   for n in names do
     nFiles := nFiles + 1
     let pfx := surveyFilePrefix n
-    let p := (dir : System.FilePath) / (n : System.FilePath)
-    let contents ← readFileOrError p
-    match contents.bind (surveyEnvelopeOf p.toString) with
+    match ← readEnvelopeOf dir n with
     | .error m =>
       nBad := nBad + 1
       IO.println s!"{pfx}ERR envelope: {(m.splitOn "\n").headD m}"
     | .ok e =>
-      let (ok, par, tot) ← surveyPrintEnvelope T pfx e
+      let (ok, par, tot) ←
+        surveyPrintEnvelope (unqualifyEnvelopeTheory (envelopeTheoryName n) T)
+          pfx e
       IO.println (pfx ++ surveyTallyLine ok par tot)
       nOk := nOk + ok
       nPar := nPar + par

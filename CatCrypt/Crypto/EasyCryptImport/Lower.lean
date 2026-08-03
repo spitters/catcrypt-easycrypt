@@ -207,6 +207,9 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
   | _, .intEdivz a b, env =>
       (Int.ediv (show Int from evalExpr a env) (show Int from evalExpr b env),
        Int.emod (show Int from evalExpr a env) (show Int from evalExpr b env))
+  | _, .intAbsz a, env => (Int.natAbs (show Int from evalExpr a env) : Int)
+  | _, .intGcd a b, env =>
+      (Int.gcd (show Int from evalExpr a env) (show Int from evalExpr b env) : Int)
   | _, .intLe a b, env =>
       decide ((show Int from evalExpr a env) ≤ (show Int from evalExpr b env))
   | _, .mapSet (a := a) (b := b) m k v, env =>

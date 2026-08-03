@@ -19,8 +19,10 @@ The syntax is three layers, mirroring EasyCrypt's `form`:
 * `EcTerm t` — the value layer, intrinsically typed by an `EcTy` code. Logical
   variables, literals, a module global read at a memory (`g{&m}`), the result of
   the enclosing judgement (`res`), the operators of `Ast.lean`'s expression
-  fragment, an application of an abstract operator (`opApp`), `if`, and `let`.
-  An `EcExpr` embeds directly (`ofExpr`).
+  fragment, an application of an abstract operator (`opApp`), a function applied
+  to an argument (`app`), `if`, and `let`. An `EcExpr` embeds directly
+  (`ofExpr`). There is no lambda: a function reaches a statement as a quantified
+  logical variable at an `EcTy.arrow` code and is consumed by `app`.
 * `EcProb` — the probability layer: `Pr[q(arg) @ &m : ev]`, constants, a
   probability-valued parameter, sum, product, and absolute difference.
 * `EcForm` — the formula layer: the first-order skeleton (the connectives,
@@ -258,6 +260,11 @@ inductive EcTerm : EcTy → Type where
   applied at the unit literal. The realization is read from the ambient `OpEnv`
   (`Params.lean`), which `EcForm.allOp` binds. -/
   | opApp (path : String) (s : EcSig) (arg : EcTerm s.arg) : EcTerm s.res
+  /-- A function applied to an argument. The function is a term at an arrow
+  code, typically a logical variable `EcForm.allTy` bound at one. There is no
+  constructor building a function, so the applied term is always something the
+  statement quantifies over or reads. -/
+  | app {a b : EcTy} (f : EcTerm (.arrow a b)) (x : EcTerm a) : EcTerm b
   /-- Boolean negation. -/
   | bnot (e : EcTerm .bool) : EcTerm .bool
   /-- Boolean conjunction. -/
@@ -284,6 +291,12 @@ inductive EcTerm : EcTy → Type where
   a pair, the remainder taken in `[0, |d|)`, and `(0, m)` at divisor zero. `%/`
   and `%%` are its projections. -/
   | intEdivz (a b : EcTerm .int) : EcTerm (.prod .int .int)
+  /-- The absolute value, EasyCrypt's `absz`: the argument when it is
+  non-negative and its negation otherwise. -/
+  | intAbsz (a : EcTerm .int) : EcTerm .int
+  /-- The greatest common divisor, EasyCrypt's `gcd`: the non-negative common
+  divisor that every common divisor is bounded by, and `0` at `(0, 0)`. -/
+  | intGcd (a b : EcTerm .int) : EcTerm .int
   /-- Integer order comparison. The strict order has no constructor of its own:
   `x < y` is the negation of the reversed comparison, the shape `EcExpr` reads it
   at too. -/
@@ -375,6 +388,7 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
   | _, .glob _ _ => []
   | _, .res _ _ => []
   | _, .opApp path s arg => (path, s) :: EcTerm.opsOf arg
+  | _, .app f x => EcTerm.opsOf f ++ EcTerm.opsOf x
   | _, .bnot e => EcTerm.opsOf e
   | _, .band a b => EcTerm.opsOf a ++ EcTerm.opsOf b
   | _, .bxor a b => EcTerm.opsOf a ++ EcTerm.opsOf b
@@ -387,6 +401,8 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
   | _, .intMul a b => EcTerm.opsOf a ++ EcTerm.opsOf b
   | _, .intOpp a => EcTerm.opsOf a
   | _, .intEdivz a b => EcTerm.opsOf a ++ EcTerm.opsOf b
+  | _, .intAbsz a => EcTerm.opsOf a
+  | _, .intGcd a b => EcTerm.opsOf a ++ EcTerm.opsOf b
   | _, .intLe a b => EcTerm.opsOf a ++ EcTerm.opsOf b
   | _, .mapMem m k => EcTerm.opsOf m ++ EcTerm.opsOf k
   | _, .listCons x l => EcTerm.opsOf x ++ EcTerm.opsOf l

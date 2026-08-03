@@ -103,6 +103,7 @@ def emitTy : EcTy → String
   | .fset a => s!"(EcTy.fset {emitTy a})"
   | .distr a => s!"(EcTy.distr {emitTy a})"
   | .intRange lo hi _ => s!"(EcTy.intRange ({lo} : Int) ({hi} : Int))"
+  | .arrow a b => s!"(EcTy.arrow {emitTy a} {emitTy b})"
   | .opaque n => s!"(EcTy.opaque {emitStr n})"
 
 /-- A value of `t.interp` as a Lean term at that type. A `fin n` value is printed
@@ -116,7 +117,8 @@ its elements is written is not part of the value. A distribution value prints
 as the canonical inhabitant: the only distribution literal the decoder
 produces is the `witness` row, whose value is `default`, and a hand-written
 literal at another distribution value is outside what a printed term can
-denote. -/
+denote. A function value prints the same way and for the same reason: the term
+layer has no lambda, so `witness` is the only literal at an arrow code. -/
 def emitVal : (t : EcTy) → t.interp → String
   | .unit, _ => "()"
   | .bool, b => match (show Bool from b) with | true => "true" | false => "false"
@@ -143,6 +145,7 @@ def emitVal : (t : EcTy) → t.interp → String
             (show Finset a.interp from s).val))
         ++ "])"
   | .distr a, _ => "(EcTy.defaultOf " ++ emitTy (.distr a) ++ ")"
+  | .arrow a b, _ => "(EcTy.defaultOf " ++ emitTy (.arrow a b) ++ ")"
   | .intRange lo hi h, v =>
       "(⟨(" ++ toString (show {x : Int // lo ≤ x ∧ x < hi} from v).val
         ++ " : Int), by omega⟩ : " ++ emitTy (.intRange lo hi h) ++ ".interp)"
@@ -197,6 +200,9 @@ def emitExpr : {t : EcTy} → EcExpr t → String
   | _, .intOpp a => "(EcExpr.intOpp " ++ emitExpr a ++ ")"
   | _, .intEdivz a b =>
       "(EcExpr.intEdivz " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
+  | _, .intAbsz a => "(EcExpr.intAbsz " ++ emitExpr a ++ ")"
+  | _, .intGcd a b =>
+      "(EcExpr.intGcd " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
   | _, .intLe a b => "(EcExpr.intLe " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
   | _, .mapSet m k v =>
       "(EcExpr.mapSet " ++ emitExpr m ++ " " ++ emitExpr k ++ " " ++ emitExpr v ++ ")"

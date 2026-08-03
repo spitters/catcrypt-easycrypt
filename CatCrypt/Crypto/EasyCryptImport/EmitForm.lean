@@ -290,6 +290,8 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
       else do
         let a ← emitShallowTerm arg C
         .ok s!"({nm} {a})"
+  | _, .app f x, C => do
+    let g ← emitShallowTerm f C; let a ← emitShallowTerm x C; .ok s!"({g} {a})"
   | _, .bnot e, C => do let a ← emitShallowTerm e C; .ok s!"(!{a})"
   | _, .band a b, C => do
     let x ← emitShallowTerm a C; let y ← emitShallowTerm b C; .ok s!"({x} && {y})"
@@ -313,6 +315,11 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
   | _, .intEdivz a b, C => do
     let x ← emitShallowTerm a C; let y ← emitShallowTerm b C
     .ok s!"(Int.ediv {x} {y}, Int.emod {x} {y})"
+  | _, .intAbsz a, C => do
+    let x ← emitShallowTerm a C; .ok s!"(Int.natAbs {x} : Int)"
+  | _, .intGcd a b, C => do
+    let x ← emitShallowTerm a C; let y ← emitShallowTerm b C
+    .ok s!"(Int.gcd {x} {y} : Int)"
   | _, .intLe a b, C => do
     let x ← emitShallowTerm a C; let y ← emitShallowTerm b C
     .ok s!"(decide ({x} ≤ {y}))"

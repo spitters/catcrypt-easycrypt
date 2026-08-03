@@ -82,8 +82,8 @@ does not accept them:
   `duniform` over a list, `dlist`, `dfun`, `dopt`, `dfold` and `dinter`;
 * a loop with a runtime guard — `forN` carries an iteration count, and the
   EasyCrypt `while` shapes that determine one are listed in `Json.lean`;
-* types outside `EcTy`, in particular real-valued and function types; see
-  `Ty.lean` for what the universe covers and where finiteness is still required;
+* types outside `EcTy`, in particular real-valued types and sums; see `Ty.lean`
+  for what the universe covers and where finiteness is still required;
 * complexity and cost annotations (`[A : `#queries, …`]`), which have no
   representation in CatCrypt;
 * module restrictions (`A{-M}`) and `islossless`, which are not part of the
@@ -218,6 +218,12 @@ inductive EcExpr : EcTy → Type where
   a pair, the remainder taken in `[0, |d|)`, and `(0, m)` at divisor zero. `%/`
   and `%%` are its projections. -/
   | intEdivz (a b : EcExpr .int) : EcExpr (.prod .int .int)
+  /-- The absolute value, EasyCrypt's `absz`: the argument when it is
+  non-negative and its negation otherwise. -/
+  | intAbsz (a : EcExpr .int) : EcExpr .int
+  /-- The greatest common divisor, EasyCrypt's `gcd`: the non-negative common
+  divisor that every common divisor is bounded by, and `0` at `(0, 0)`. -/
+  | intGcd (a b : EcExpr .int) : EcExpr .int
   /-- Integer order comparison. -/
   | intLe (a b : EcExpr .int) : EcExpr .bool
   /-- Bind a key in a finite map, shadowing any earlier binding. -/

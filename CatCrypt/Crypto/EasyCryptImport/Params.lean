@@ -34,9 +34,11 @@ Everything an operator declaration needs rides on `EcSig`:
   interpretation is an `SDistr`, so an abstract distribution is an operator and
   reaches sampling through `EcDistr.ofExpr`.
 
-`EcTy` therefore gains no arrow code: an operator's arrow type is absorbed into
-`EcSig`, which is not an `EcTy`, so the bound on the type universe
-(`Ty.lean`: no function types) stands.
+An operator's own arrow type is absorbed into `EcSig` rather than read as an
+`EcTy.arrow`: the declaration's outermost arrows are its arguments, and the
+argument codes nest into `s.arg`. An argument that is itself a function type is
+at `EcTy.arrow` (`Ty.lean`), so `OpEnv` resolves a higher-order operator to a
+function taking a function.
 
 ## Totality, and what the statement's own binders are for
 

@@ -288,6 +288,8 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
   | _, .glob g m, ρ => (ρ.mem m).gget g.loc
   | _, .res t s, ρ => (ρ.resOf s).get t
   | _, .opApp path s arg, ρ => ρ.ops path s (evalTerm arg ρ)
+  | _, .app (a := a) (b := b) f x, ρ =>
+      (show a.interp → b.interp from evalTerm f ρ) (evalTerm x ρ)
   | _, .bnot e, ρ => !(evalTerm e ρ)
   | _, .band a b, ρ => (evalTerm a ρ) && (evalTerm b ρ)
   | _, .bxor a b, ρ => xor (evalTerm a ρ) (evalTerm b ρ)
@@ -310,6 +312,9 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
   | _, .intEdivz a b, ρ =>
       (Int.ediv (show Int from evalTerm a ρ) (show Int from evalTerm b ρ),
        Int.emod (show Int from evalTerm a ρ) (show Int from evalTerm b ρ))
+  | _, .intAbsz a, ρ => (Int.natAbs (show Int from evalTerm a ρ) : Int)
+  | _, .intGcd a b, ρ =>
+      (Int.gcd (show Int from evalTerm a ρ) (show Int from evalTerm b ρ) : Int)
   | _, .intLe a b, ρ =>
       decide ((show Int from evalTerm a ρ) ≤ (show Int from evalTerm b ρ))
   -- The three membership tests answer `false` at an element code without
@@ -335,6 +340,11 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
 
 @[simp] theorem evalTerm_var (t : EcTy) (x : String) (ρ : FormEnv) :
     evalTerm (.var t x) ρ = ρ.locals.read t x := rfl
+
+@[simp] theorem evalTerm_app {a b : EcTy} (f : EcTerm (.arrow a b)) (x : EcTerm a)
+    (ρ : FormEnv) :
+    evalTerm (.app f x) ρ
+      = (show a.interp → b.interp from evalTerm f ρ) (evalTerm x ρ) := rfl
 
 @[simp] theorem evalTerm_pair {a b : EcTy} (x : EcTerm a) (y : EcTerm b) (ρ : FormEnv) :
     evalTerm (.pair x y) ρ = (evalTerm x ρ, evalTerm y ρ) := rfl
@@ -374,6 +384,17 @@ theorem evalTerm_glob_finLoc (g : EcGlobal) (hfin : g.ty.isFin = true) (m : EcMe
     evalTerm (.intEdivz a b) ρ
       = (Int.ediv (show Int from evalTerm a ρ) (show Int from evalTerm b ρ),
          Int.emod (show Int from evalTerm a ρ) (show Int from evalTerm b ρ)) := rfl
+
+/-- `absz` at a realization: the absolute value, as a non-negative integer. -/
+@[simp] theorem evalTerm_intAbsz (a : EcTerm .int) (ρ : FormEnv) :
+    evalTerm (.intAbsz a) ρ = (Int.natAbs (show Int from evalTerm a ρ) : Int) := rfl
+
+/-- `gcd` at a realization: the greatest common divisor, as a non-negative
+integer. -/
+@[simp] theorem evalTerm_intGcd (a b : EcTerm .int) (ρ : FormEnv) :
+    evalTerm (.intGcd a b) ρ
+      = (Int.gcd (show Int from evalTerm a ρ) (show Int from evalTerm b ρ) : Int) :=
+  rfl
 
 @[simp] theorem evalTerm_intLe (a b : EcTerm .int) (ρ : FormEnv) :
     evalTerm (.intLe a b) ρ

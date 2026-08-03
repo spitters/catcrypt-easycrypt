@@ -67,6 +67,10 @@ is what uniform sampling and a `CatCrypt.Core.Location` are stated against.
   EasyCrypt `subtype` declaration at the `int` carrier. The code carries a proof
   of `lo < hi`, which is what inhabits the interpretation; see the section on
   subtypes below.
+* `arrow a b` — a function type, EasyCrypt's `a -> b`, interpreted as the Lean
+  function type `a.interp → b.interp`. Both arrows are total, so the two agree
+  on which values the type has. The code is outside `hasEq` and outside `isFin`;
+  see the section on function types below.
 * `opaque name` — an abstract EasyCrypt type (`type pkey.`), which declares a
   name and nothing else. See the next section for what the code denotes.
 
@@ -97,6 +101,26 @@ carrier. `Carrier p` is a countably infinite type carrying no operations, so a
 theory that declares operators over its abstract type and states axioms about
 them still needs a per-theory realization witness — the operators exhibited at
 the carrier, with the axioms discharged there.
+
+## What a function type denotes
+
+`arrow a b` denotes `a.interp → b.interp`. EasyCrypt's `->` is total functions
+and Lean's `→` is total functions, so a value of the code is a value of the
+source type.
+
+`hasEq` is false at an arrow code, following the `distr` precedent: a function
+space has neither decidable equality nor countability, so no equality test and
+no module variable lives at one, and `decEqOfHasEq` and `countableOfHasEq` have
+vacuous arrow arms.
+
+`isFin` is false at every arrow code, including one whose domain and codomain
+are both finite. This is a restriction of the code rather than a property of the
+interpretation: no uniform sampling over a function space is available, and a
+later phase may lift it.
+
+A function reaches a statement as a quantified logical variable — `EcForm.allTy`
+binds at an arbitrary `EcTy` — and is consumed by `EcTerm.app`. The term layer
+has no lambda, so a function value is never constructed inside a statement.
 
 ## What an EasyCrypt datatype denotes
 
@@ -144,9 +168,9 @@ under the axioms `Top.Subtype` states about them.
 ## The finite subset
 
 `EcTy.isFin` marks the codes whose interpretation is a `Fintype`: `unit`, `bool`,
-`fin n`, and products, options and finite sets of those. `int`, `list`, `map`
-and `opaque` are outside it — an abstract type need not be finite, so no uniform
-sampling is available at an `opaque` code.
+`fin n`, and products, options and finite sets of those. `int`, `list`, `map`,
+`arrow` and `opaque` are outside it — an abstract type need not be finite, so no
+uniform sampling is available at an `opaque` code.
 
 Uniform sampling requires a finite code and keeps requiring it: `SPComp.sample`
 is uniform over its carrier, so it is available only at a finite code.
@@ -163,11 +187,11 @@ of the cell rather than a second cell.
 ## Bound on expressible types
 
 `EcTy`'s `hasEq` fragment is closed under products and maps of countable
-types, so every `hasEq` interpretation is `Countable`; the `distr` code is the
-one uncountable interpretation, and it is confined to values (formals and
-locals). EasyCrypt types outside both — real-valued types, function types,
-arbitrary HOL types, sums, and a subtype whose carrier is one of these — have no
-`EcTy` code.
+types, so every `hasEq` interpretation is `Countable`; the `distr` and `arrow`
+codes are the uncountable interpretations, and each is confined to values —
+formals, locals and quantified logical variables. EasyCrypt types outside both —
+real-valued types, arbitrary HOL types, sums, and a subtype whose carrier is one
+of these — have no `EcTy` code.
 
 ## Dynamically typed values
 
@@ -229,6 +253,13 @@ inductive EcTy where
   at a bound that is a theory parameter takes the proof from that theory's
   imported hypotheses. -/
   | intRange (lo hi : Int) (ne : lo < hi := by omega)
+  /-- A function type, EasyCrypt's `a -> b`, interpreted as the Lean function
+  type `a.interp → b.interp`. Both arrows are total. The code is outside `hasEq`
+  (a function space has neither decidable equality nor countability) and outside
+  `isFin`, so no equality test, no module variable and no uniform sampling lives
+  at it; a function is quantified over by `EcForm.allTy` and applied by
+  `EcTerm.app`. -/
+  | arrow (a b : EcTy)
   /-- An abstract EasyCrypt type, carried by its path and interpreted at the
   path-indexed carrier `Carrier name` (see the module docstring). Distinct paths
   are distinct codes and distinct interpretations. -/
@@ -251,6 +282,7 @@ per-universe instance chain. -/
   | .fset a => Finset a.interp
   | .distr a => CatCrypt.Prob.SDistr a.interp
   | .intRange lo hi _ => {x : Int // lo ≤ x ∧ x < hi}
+  | .arrow a b => a.interp → b.interp
   | .opaque p => Carrier p
 
 /-- A computable inhabitant of `SDistr α`: the failed computation, all mass on
@@ -279,6 +311,9 @@ instance interpInhabited : (t : EcTy) → Inhabited t.interp
   | .fset a => inferInstanceAs (Inhabited (Finset a.interp))
   | .distr a => ⟨sdistrDefault a.interp⟩
   | .intRange lo _ h => ⟨⟨lo, le_refl lo, h⟩⟩
+  | .arrow _ b =>
+      letI := interpInhabited b
+      ⟨fun _ => default⟩
   | .opaque p => inferInstanceAs (Inhabited (Carrier p))
 
 /-- The codes whose interpretation has decidable equality and is countable —
@@ -297,6 +332,7 @@ def EcTy.hasEq : EcTy → Bool
   | .fset a => a.hasEq
   | .distr _ => false
   | .intRange _ _ _ => true
+  | .arrow _ _ => false
   | .opaque _ => true
 
 @[simp] theorem EcTy.hasEq_unit : EcTy.unit.hasEq = true := rfl
@@ -315,6 +351,8 @@ def EcTy.hasEq : EcTy → Bool
 @[simp] theorem EcTy.hasEq_distr (a : EcTy) : (EcTy.distr a).hasEq = false := rfl
 @[simp] theorem EcTy.hasEq_intRange (lo hi : Int) (h : lo < hi) :
     (EcTy.intRange lo hi h).hasEq = true := rfl
+@[simp] theorem EcTy.hasEq_arrow (a b : EcTy) :
+    (EcTy.arrow a b).hasEq = false := rfl
 @[simp] theorem EcTy.hasEq_opaque (name : String) :
     (EcTy.opaque name).hasEq = true := rfl
 
@@ -347,6 +385,7 @@ def decEqOfHasEq : (t : EcTy) → t.hasEq = true → DecidableEq t.interp
   | .distr _, h => absurd h (by simp)
   | .intRange lo hi hne, _ =>
       inferInstanceAs (DecidableEq {x : Int // lo ≤ x ∧ x < hi})
+  | .arrow _ _, h => absurd h (by simp)
   | .opaque p, _ => inferInstanceAs (DecidableEq (Carrier p))
 
 /-- The countability of a `hasEq` code's interpretation, which is what a heap
@@ -378,6 +417,7 @@ uncountable, so a module variable cannot live at a `distr` code, and
   | .distr _, h => absurd h (by simp)
   | .intRange lo hi _, _ =>
       inferInstanceAs (Countable {x : Int // lo ≤ x ∧ x < hi})
+  | .arrow _ _, h => absurd h (by simp)
   | .opaque p, _ => inferInstanceAs (Countable (Carrier p))
 
 instance interpNonempty (t : EcTy) : Nonempty t.interp := ⟨default⟩
@@ -406,6 +446,7 @@ def EcTy.isFin : EcTy → Bool
   | .fset a => a.isFin
   | .distr _ => false
   | .intRange _ _ _ => false
+  | .arrow _ _ => false
   | .opaque _ => false
 
 @[simp] theorem EcTy.isFin_unit : EcTy.unit.isFin = true := rfl
@@ -423,6 +464,8 @@ def EcTy.isFin : EcTy → Bool
 @[simp] theorem EcTy.isFin_distr (a : EcTy) : (EcTy.distr a).isFin = false := rfl
 @[simp] theorem EcTy.isFin_intRange (lo hi : Int) (h : lo < hi) :
     (EcTy.intRange lo hi h).isFin = false := rfl
+@[simp] theorem EcTy.isFin_arrow (a b : EcTy) :
+    (EcTy.arrow a b).isFin = false := rfl
 @[simp] theorem EcTy.isFin_opaque (name : String) :
     (EcTy.opaque name).isFin = false := rfl
 
@@ -446,6 +489,7 @@ def EcTy.isFin : EcTy → Bool
       inferInstanceAs (Fintype (Finset a.interp))
   | .distr _, h => absurd h (by simp)
   | .intRange _ _ _, h => absurd h (by simp)
+  | .arrow _ _, h => absurd h (by simp)
   | .opaque _, h => absurd h (by simp)
 
 /-! ## Dynamically typed values -/
