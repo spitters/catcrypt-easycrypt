@@ -527,10 +527,73 @@ paths can appear in any envelope while the declaration appears only in the
 prelude's own. Registering these first is what makes the two meet. -/
 def isPreludeEnvelope (name : String) : Bool := name.startsWith "prelude__"
 
+/-- The theory an envelope's own top-level items belong to, read off the file
+name: the stem between the directory prefix and the first extension, so
+`prelude__Logic.ec.json` is `Logic`. -/
+def envelopeTheoryName (name : String) : String :=
+  let stem := (name.splitOn "__").getLastD name
+  (stem.splitOn ".").headD stem
+
+/-- The path a top-level item of the theory `th` carries outside its own
+envelope. An envelope roots the items it declares itself at `Top`, while every
+client writes them under the theory's name, so `Top.associative` of `Logic.ec` is
+`Top.Logic.associative` everywhere it is read. An item of an inner theory is
+already fully qualified, which is why only a single segment after `Top.` is
+qualified. -/
+def qualifyTopPath (th : String) (p : String) : Option String :=
+  if p.startsWith "Top." then
+    let rest := p.drop 4
+    if rest.contains '.' then none else some ("Top." ++ th ++ "." ++ rest)
+  else none
+
+/-- The table `new`, followed by the entries it holds and `old` did not, keyed
+again by their theory-qualified paths.
+
+The copies are appended rather than prepended, and only the entries this
+envelope added are copied: `List.lookup` takes the first match, so an entry a
+declaration puts at a qualified path stays ahead of every alias. -/
+def aliasAddedEntries {α : Type} (th : String) (old new : List (String × α)) :
+    List (String × α) :=
+  new ++ (new.take (new.length - old.length)).filterMap (fun e =>
+    (qualifyTopPath th e.1).map (fun q => (q, e.2)))
+
+/-- The tables `T'` an envelope's registration produced from `T`, with the
+declaration entries it added keyed again by their theory-qualified paths. -/
+def aliasEnvelopeTheory (th : String) (T T' : DecodeTables) : DecodeTables :=
+  { T' with
+    tyPaths := aliasAddedEntries th T.tyPaths T'.tyPaths
+    constPaths := aliasAddedEntries th T.constPaths T'.constPaths
+    absOpPaths := aliasAddedEntries th T.absOpPaths T'.absOpPaths
+    defOpPaths := aliasAddedEntries th T.defOpPaths T'.defOpPaths
+    polyOpPaths := aliasAddedEntries th T.polyOpPaths T'.polyOpPaths }
+
+-- The theory name is the stem between the directory prefix and the first
+-- extension.
+#guard envelopeTheoryName "prelude__Logic.ec.json" == "Logic"
+#guard envelopeTheoryName "algebra__Bigalg.ec.json" == "Bigalg"
+
+-- A top-level item takes the theory's name; an item already qualified by an
+-- inner theory, and a path outside `Top`, take nothing.
+#guard qualifyTopPath "Logic" "Top.associative" == some "Top.Logic.associative"
+#guard qualifyTopPath "Logic" "Top.Pervasive.=" == none
+#guard qualifyTopPath "Logic" "Other.x" == none
+
+-- Only the entries this envelope added are copied, and the copies go behind
+-- what is already there.
+#guard aliasAddedEntries "Logic" [("Top.old", 1)] [("Top.new", 2), ("Top.old", 1)]
+  == [("Top.new", 2), ("Top.old", 1), ("Top.Logic.new", 2)]
+
+-- An entry a declaration puts at a qualified path is ahead of every alias, so
+-- it wins the lookup.
+#guard (List.lookup "Top.Logic.new"
+  (aliasAddedEntries "Logic" [("Top.old", 1)]
+    [("Top.Logic.new", 3), ("Top.new", 2), ("Top.old", 1)])) == some 3
+
 /-- The tables every envelope of `dir` is surveyed against: the ingestion's own
 prelude, extended with the type and operator declarations of the corpus's prelude
-theories. A prelude envelope that does not read is skipped, leaving the tables it
-would have extended. -/
+theories, each of those also under the path its theory's name gives it. A prelude
+envelope that does not read is skipped, leaving the tables it would have
+extended. -/
 def surveyPreludeTables (dir : String) (names : List String) :
     IO DecodeTables := do
   let mut T := ecPrelude
@@ -540,7 +603,9 @@ def surveyPreludeTables (dir : String) (names : List String) :
       let contents ← readFileOrError p
       match contents.bind (surveyEnvelopeOf p.toString) with
       | .error _ => pure ()
-      | .ok e => T := registerThOperators (registerThTypes T e.items) e.items
+      | .ok e =>
+        T := aliasEnvelopeTheory (envelopeTheoryName n) T
+          (registerThOperators (registerThTypes T e.items) e.items)
   return T
 
 /-- Survey every `*.json` file of `dir` in this process, in ascending name order,

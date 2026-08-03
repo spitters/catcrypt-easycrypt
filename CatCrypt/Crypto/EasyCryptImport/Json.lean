@@ -488,6 +488,10 @@ structure DecodeTables where
   read of one expands at the type arguments its node carries; the declaration is
   held as written, since it has no codes until then. -/
   polyOpPaths : List (String × EcPolyOpDefn)
+  /-- The code each type variable in scope is read at, keyed by its source name.
+  It is empty everywhere but under a read of a definition written over type
+  parameters, where the read site's type arguments say what they are. -/
+  tyVarCodes : List (String × EcTy)
   /-- Module-scoped globals, keyed by the qualified name the exporter uses. -/
   globals : List (String × EcGlobal)
   /-- Procedure signatures, keyed by the cross-path a call site writes. A call
@@ -569,6 +573,7 @@ def ecPrelude : DecodeTables where
   absOpPaths := []
   defOpPaths := []
   polyOpPaths := []
+  tyVarCodes := []
   globals := []
   procSigs := []
   pendingSubtypes := []
@@ -833,6 +838,15 @@ def decodeTy (T : DecodeTables) (j : Json) : Except String EcTy :=
             it has no image"
         | a :: rest => .ok (nestTuple a rest)
   | .ok "Unsupported" => fail (unsupportedMsg j)
+  | .ok "Tvar" =>
+    match getStr j "name" with
+    | .error e => .error e
+    | .ok x =>
+      match List.lookup x T.tyVarCodes with
+      | some t => .ok t
+      | none =>
+        fail s!"type variable '{x}' in {j.compress}: EcTy has no type variables, \
+          so one has a code only where a read site says what it is"
   | .ok k => fail s!"unsupported type node kind '{k}' in {j.compress}"
 termination_by jsonSize j
 decreasing_by
