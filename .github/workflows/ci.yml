@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build and check for sorry
+    runs-on: ubuntu-latest
+    env:
+      # Caps the Lean worker count, and with it the peak resident set. Lake has
+      # no job limit of its own: it registers build jobs as Lean tasks and the
+      # runtime's task pool, sized by this variable, decides how many run.
+      LEAN_NUM_THREADS: 4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan
+        run: |
+          curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Cache .lake
+        uses: actions/cache@v4
+        with:
+          path: .lake
+          key: lake-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'lake-manifest.json') }}
+          restore-keys: lake-
+
+      - name: Fetch prebuilt Mathlib
+        # Mathlib is 8245 modules; the community oleans are downloaded rather
+        # than compiled. The other two git dependencies are small enough to
+        # build from source — catcryptCore is 247 modules and hax-lean is one.
+        # `|| true` so a cache-server hiccup falls back to a source build
+        # instead of failing the run.
+        run: lake exe cache get || true
+
+      - name: Build
+        run: lake build CatCrypt.Crypto.EasyCryptImport.All
+
+      - name: Check for sorry
+        # The AST-level linter, which is what the check has to be: `grep sorry`
+        # reports comments and prose.
+        run: lake build CatCrypt.Crypto.EasyCryptImport.All -- --run-linter=sorryIn
