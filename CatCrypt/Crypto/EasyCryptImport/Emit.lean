@@ -147,7 +147,7 @@ def emitVal : (t : EcTy) → t.interp → String
       "(⟨(" ++ toString (show {x : Int // lo ≤ x ∧ x < hi} from v).val
         ++ " : Int), by omega⟩ : " ++ emitTy (.intRange lo hi h) ++ ".interp)"
   | .opaque n, z =>
-      "((" ++ toString (show Int from z) ++ " : Int) : "
+      "(⟨(" ++ toString (show Carrier n from z).val ++ " : Int)⟩ : "
         ++ emitTy (.opaque n) ++ ".interp)"
 
 /-- A procedure signature as a Lean term. -/

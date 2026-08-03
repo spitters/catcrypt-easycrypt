@@ -328,6 +328,15 @@ def FormTables.bindLocal (F : FormTables) (st : Nat) (nm : String) :
   else
     .ok { F with locals := (st, nm) :: F.locals }
 
+/-- The name a binder is read under when its source name alone would alias
+another binder: its source name and its uniqueness stamp. -/
+def freshLocalName (nm : String) (st : Nat) : String := s!"{nm}_{st}"
+
+/-- The name the logical variable `nm` at `stamp` is bound under: its source name
+when no other live binder carries that name, and `freshLocalName` otherwise. -/
+def FormTables.localBindName (F : FormTables) (st : Nat) (nm : String) : String :=
+  if F.locals.any (fun p => p.2 == nm && p.1 != st) then freshLocalName nm st else nm
+
 /-- Bind a module binder's source name to the interface it ranges over, and its
 stamp to that name. -/
 def FormTables.bindModBinder (F : FormTables) (st : Nat) (nm : String)
@@ -649,7 +658,7 @@ naming it, since the node it fails at is one the statement does not contain. -/
 uniqueness stamp. -/
 def opParamName (x : EcVarId) : String :=
   match x.stamp with
-  | some s => s!"{x.name}_{s}"
+  | some s => freshLocalName x.name s
   | none => x.name
 
 /-- The tables with each of a definition's parameters bound as a logical
@@ -1363,7 +1372,17 @@ def decodeGlobTupleEq (F : FormTables) : List Json → List Json →
 
 A `Fquant` node carries a list of binders and one body. `bindBinders` walks the
 list, extending the tables and building the chain of quantifier nodes the body
-sits under, so the formula decoder makes a single recursive call, on the body. -/
+sits under, so the formula decoder makes a single recursive call, on the body.
+
+A binder is bound under its source name, and under `freshLocalName` when another
+live binder already carries that name. The two cases arise together: an expanded
+definition's binders and the binders of the statement reading it are named
+independently, and a definition quantifying over `x` read inside a statement
+quantifying over its own `x` would otherwise be refused by
+`FormTables.bindLocal`, whose check is what keeps a read of the outer `x` from
+resolving to the inner binder. The occurrences carry the binder's stamp and
+`localNameOf` resolves them through `locals`, so they read the name the binder
+was bound under. -/
 
 /-- The tables extended by one binder, and the quantifier node it wraps a formula
 in.
@@ -1383,19 +1402,19 @@ def bindBinder (F : FormTables) (q : String) (b : Json) :
   | "GTty" =>
     if tyConstrPath g "ty" == some F.paths.realTy then
       if q = "Lforall" then
-        let F' ← F.bindLocal st nm
-        .ok (F', fun body => .allProb nm body)
+        let F' ← F.bindLocal st (F.localBindName st nm)
+        .ok (F', fun body => .allProb (F.localBindName st nm) body)
       else
         fail s!"the real-valued binder '{nm}' under '{q}': EcForm quantifies a \
           probability parameter universally only"
     else
       let t ← decodeTyField F.tables g "ty"
       if q = "Lforall" then
-        let F' ← F.bindLocal st nm
-        .ok (F', fun body => .allTy t nm body)
+        let F' ← F.bindLocal st (F.localBindName st nm)
+        .ok (F', fun body => .allTy t (F.localBindName st nm) body)
       else if q = "Lexists" then
-        let F' ← F.bindLocal st nm
-        .ok (F', fun body => .exTy t nm body)
+        let F' ← F.bindLocal st (F.localBindName st nm)
+        .ok (F', fun body => .exTy t (F.localBindName st nm) body)
       else
         fail s!"the lambda binder '{nm}' in a formula: EcForm has no lambda"
   | "GTmem" =>
@@ -1585,6 +1604,14 @@ to values, because a parameter may be function-typed — `associative`'s is — 
 `EcTy` has no arrow code to bind one at. What the body's applications name after
 the substitution is the argument's own operator.
 
+The substitution contracts where the parameter it replaces heads an application
+and the argument is a lambda, since the exporter writes a partial application as
+one: `right_loop inv o` reads `cancel` at `fun x => o x y`, and `cancel`'s body
+applies both of its parameters, so the two meet. A lambda planted under an
+application has no image, because a formula applies operators only, and the
+contracted node is the lambda's body at the arguments instead. An application the
+lambda's binders do not match in number stands as it is and is reported there.
+
 The expansion belongs to the formula decoder because these bodies are
 quantified: `associative f` is defined by `forall x y z, f x (f y z) = f (f x y)
 z`, and `EcForm.allTy` is where a binder has an image. The body is not a sub-node
@@ -1619,18 +1646,66 @@ binds, so an exhausted bound is a decode failure and never a silent
 expansion. -/
 def substDepth : Nat := 256
 
+/-- The binder stamps and the body of a lambda node, when the node is one. -/
+def lambdaStamps (j : Json) : Option (List Nat × Json) :=
+  match j.getObjValAs? String "kind", j.getObjValAs? String "quant" with
+  | .ok "Fquant", .ok "Llambda" =>
+    match j.getObjVal? "binders", j.getObjVal? "body" with
+    | .ok (.arr bs), .ok body =>
+      match bs.toList.mapM (fun b => (b.getObjValAs? Nat "stamp").toOption) with
+      | some sts => some (sts, body)
+      | none => none
+    | _, _ => none
+  | _, _ => none
+
+/-- The arguments of an application whose head is a read of the logical variable
+at `stamp`, when the node is one. -/
+def appArgsAtLocal (stamp : Nat) (j : Json) : Option (List Json) :=
+  match j.getObjValAs? String "kind" with
+  | .ok "Fapp" =>
+    match j.getObjVal? "f" with
+    | .ok fJ =>
+      match fJ.getObjValAs? String "kind", fJ.getObjValAs? Nat "stamp" with
+      | .ok "Flocal", .ok st =>
+        if st == stamp then
+          match j.getObjVal? "args" with
+          | .ok (.arr as) => some as.toList
+          | _ => none
+        else none
+      | _, _ => none
+    | .error _ => none
+  | _ => none
+
+/-- The parts a contraction of the node `j` is built from, when `j` applies a
+read of the logical variable at `stamp` to as many arguments as the lambda `repl`
+binds: the lambda's binder stamps, the arguments, and the lambda's body. An
+argument count the lambda's binders do not match has no contraction. -/
+def betaRedexAt (stamp : Nat) (repl j : Json) :
+    Option (List Nat × List Json × Json) :=
+  match appArgsAtLocal stamp j, lambdaStamps repl with
+  | some args, some (sts, body) =>
+    if sts.length = args.length then some (sts, args, body) else none
+  | _, _ => none
+
 /-- The node with every read of the logical variable at `stamp` replaced by
-`repl`, to the depth `fuel`. -/
-def substLocal (stamp : Nat) (repl : Json) : Nat → Json → Json
-  | 0, j => j
-  | fuel + 1, j =>
+`repl`, to the depth `fuel`. A read that `betaRedexAt` sees at the head of an
+application is contracted instead of replaced: the node becomes the lambda's
+body with each of its binders substituted by the argument at that position. -/
+def substLocal : Nat → Json → Nat → Json → Json
+  | _, _, 0, j => j
+  | stamp, repl, fuel + 1, j =>
     match j with
     | .arr as => .arr (as.map (substLocal stamp repl fuel))
     | .obj m =>
       match j.getObjValAs? String "kind", j.getObjValAs? Nat "stamp" with
       | .ok "Flocal", .ok st => if st == stamp then repl else j
       | _, _ =>
-        Json.mkObj (m.toList.map (fun kv => (kv.1, substLocal stamp repl fuel kv.2)))
+        match betaRedexAt stamp repl j with
+        | some (sts, args, body) =>
+          (sts.zip (args.map (substLocal stamp repl fuel))).foldl
+            (fun b q => substLocal q.1 q.2 fuel b) body
+        | none =>
+          Json.mkObj (m.toList.map (fun kv => (kv.1, substLocal stamp repl fuel kv.2)))
     | _ => j
 
 /-- The stamps a definition's defining lambda binds, and the body under them.
@@ -4246,6 +4321,172 @@ private def assocTables : FormTables :=
             jAssocRead with
         | .error m =>
           m.startsWith "ec-import: unknown operator path 'Top.Logic.assoc'"
+        | _ => false)
+
+/-! ### A definition that applies its own parameters, read at lambdas
+
+`prelude/Logic.ec` declares
+
+```
+op cancel ['a 'b] (f : 'a -> 'b) (g : 'b -> 'a) = forall x, g (f x) = x.
+```
+
+The nodes below are the exporter's payload for it, at the stamps and the
+type-parameter order the export writes: a `PR_Plain` body that is a lambda over
+the two value parameters, over a quantifier whose body applies both of them.
+
+A read site writes a partial application as a lambda — `right_loop inv o` reads
+`cancel` at `fun x => o x y` — so the arguments that reach the parameters here
+are lambdas, and each meets an application of the parameter it replaces. The read
+below is at `fun u => h u` and `fun v => v`, and the statement after it quantifies
+over an `x` of its own, which is the name the declaration's binder carries. -/
+
+/-- The type parameters of the declaration. -/
+private def jCanA : Json := jTvar "'a" 1904
+private def jCanB : Json := jTvar "'b" 1903
+
+/-- The type of the first value parameter, `'a -> 'b`. -/
+private def jCanFTy : Json := jTyArrow jCanA jCanB
+
+/-- The type of the second value parameter, `'b -> 'a`. -/
+private def jCanGTy : Json := jTyArrow jCanB jCanA
+
+/-- The type of the declaration, `('a -> 'b) -> ('b -> 'a) -> bool`. -/
+private def jCanDeclTy : Json := jTyArrow jCanFTy (jTyArrow jCanGTy jFormBool)
+
+private def jCanF : Json := jMaxLocal jCanFTy "f" 1905
+private def jCanG : Json := jMaxLocal jCanGTy "g" 1906
+private def jCanX : Json := jMaxLocal jCanA "x" 1908
+
+/-- The quantified body the declaration's lambda binds, `forall x, g (f x) = x`. -/
+private def jCanBody : Json :=
+  Json.mkObj
+    [("ty", jFormBool), ("kind", Json.str "Fquant"),
+     ("quant", Json.str "Lforall"),
+     ("binders", Json.arr #[jMaxBinder "x" 1908 jCanA]),
+     ("body", jMaxApp jFormBool
+       (jMaxOpNode (jMaxFun2 jCanA jCanA jFormBool) "Top.Pervasive.=" #[jCanA])
+       #[jMaxApp jCanA jCanG #[jMaxApp jCanB jCanF #[jCanX]], jCanX])]
+
+/-- The `Th_operator` item `Top.cancel`. -/
+def jCancelOp : Json :=
+  Json.mkObj [("kind", Json.str "Th_operator"), ("name", Json.str "cancel"),
+    ("path", Json.str "Top.cancel"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[Json.str "'b", Json.str "'a"]),
+       ("ty", jCanDeclTy),
+       ("body", Json.mkObj
+         [("kind", Json.str "PR_Plain"),
+          ("form", Json.mkObj
+            [("ty", jCanDeclTy), ("kind", Json.str "Fquant"),
+             ("quant", Json.str "Llambda"),
+             ("binders", Json.arr #[jMaxBinder "f" 1905 jCanFTy,
+                                    jMaxBinder "g" 1906 jCanGTy]),
+             ("body", jCanBody)])])])]
+
+/-- The carrier the read site gives both type parameters. -/
+private def jCanDTy : Json := jTyNode "Top.D"
+
+/-- The type `D -> D`. -/
+private def jCanDFun : Json := jTyArrow jCanDTy jCanDTy
+
+/-- The signature `h`'s declaration gives it. -/
+private def canHSig : EcSig := ⟨.opaque "Top.D", .opaque "Top.D"⟩
+
+/-- `fun u => h u`, the first value argument. -/
+private def jCanLamH : Json :=
+  Json.mkObj
+    [("ty", jCanDFun), ("kind", Json.str "Fquant"), ("quant", Json.str "Llambda"),
+     ("binders", Json.arr #[jMaxBinder "u" 9101 jCanDTy]),
+     ("body", jMaxApp jCanDTy (jMaxOpNode jCanDFun "Top.h" #[])
+       #[jMaxLocal jCanDTy "u" 9101])]
+
+/-- `fun v => v`, the second value argument. -/
+private def jCanLamId : Json :=
+  Json.mkObj
+    [("ty", jCanDFun), ("kind", Json.str "Fquant"), ("quant", Json.str "Llambda"),
+     ("binders", Json.arr #[jMaxBinder "v" 9102 jCanDTy]),
+     ("body", jMaxLocal jCanDTy "v" 9102)]
+
+/-- The head of the read, `cancel<:D, D>`. -/
+private def jCanHead : Json :=
+  jMaxOpNode (jTyArrow jCanDFun (jTyArrow jCanDFun jFormBool)) "Top.cancel"
+    #[jCanDTy, jCanDTy]
+
+/-- `cancel (fun u => h u) (fun v => v)`. -/
+private def jCanRead : Json := jMaxApp jFormBool jCanHead #[jCanLamH, jCanLamId]
+
+/-- The tables the read decodes against: the carrier at the opaque code, `h` at
+the signature its declared type gives it, and the declaration over the type
+parameters. -/
+private def cancelTables : FormTables :=
+  formTables
+    ((registerThOperators (registerThTypes ecPrelude [jAbsTypeDecl "D" "Top.D"])
+        [jCancelOp]).withAbstractOp "Top.h" canHSig) []
+
+#guard cancelTables.tables.polyOpPaths.map Prod.fst == ["Top.cancel"]
+
+-- Each argument is contracted at the application of the parameter it replaces:
+-- `f x` becomes `h x` and `g (h x)` becomes `h x`, so the read decodes to the
+-- declaration's binder over `h x = x`.
+#guard (match decodeForm cancelTables jCanRead with
+        | .ok (.allTy (.opaque "Top.D") "x"
+                 (.eqT (.opApp "Top.h" _ _) (.var _ "x"))) => true
+        | _ => false)
+
+-- The identity argument leaves nothing of itself behind, so the statement reads
+-- the one operator the other argument names, once.
+#guard (match decodeForm cancelTables jCanRead with
+        | .ok f => EcForm.opsOf f == [("Top.h", canHSig)]
+        | _ => false)
+
+/-- The `Th_axiom` item `Top.canV`: a statement quantifying over an `x` of its own
+and reading the declaration, whose binder carries that name too. -/
+private def jCanVItem : Json :=
+  Json.mkObj [("kind", Json.str "Th_axiom"), ("name", Json.str "canV"),
+    ("path", Json.str "Top.canV"),
+    ("decl", Json.mkObj
+      [("tparams", Json.arr #[]), ("axiom_kind", Json.str "Lemma"),
+       ("spec", Json.mkObj
+         [("ty", jFormBool), ("kind", Json.str "Fquant"),
+          ("quant", Json.str "Lforall"),
+          ("binders", Json.arr #[jMaxBinder "x" 9110 jCanDTy]),
+          ("body", jMaxApp jFormBool jBoolImpOp
+            #[jMaxApp jFormBool
+                (jMaxOpNode (jMaxFun2 jCanDTy jCanDTy jFormBool)
+                  "Top.Pervasive.=" #[jCanDTy])
+                #[jMaxApp jCanDTy (jMaxOpNode jCanDFun "Top.h" #[])
+                    #[jMaxLocal jCanDTy "x" 9110],
+                  jMaxLocal jCanDTy "x" 9110],
+              jCanRead])])])]
+
+-- The statement's own binder is bound under its source name, and the
+-- declaration's binder, whose source name that one holds, under its source name
+-- and its stamp. The reads under each resolve to the name its binder was bound
+-- under.
+#guard (match decodeAxiom cancelTables jCanVItem with
+        | .ok (.allTy _ "x"
+                 (.imp (.eqT _ (.var _ "x"))
+                       (.allTy _ "x_1908" (.eqT _ (.var _ "x_1908"))))) => true
+        | _ => false)
+
+/-- `fun u w => u`, a lambda of two binders at a parameter the declaration
+applies to one argument. -/
+private def jCanLam2 : Json :=
+  Json.mkObj
+    [("ty", jCanDFun), ("kind", Json.str "Fquant"), ("quant", Json.str "Llambda"),
+     ("binders", Json.arr #[jMaxBinder "u" 9121 jCanDTy,
+                            jMaxBinder "w" 9122 jCanDTy]),
+     ("body", jMaxLocal jCanDTy "u" 9121)]
+
+/-- The read at that lambda. -/
+private def jCanReadArity : Json := jMaxApp jFormBool jCanHead #[jCanLam2, jCanLamId]
+
+-- An argument whose binders the application does not match in number is left
+-- where it is put, and the node is named by the head it leaves behind.
+#guard (match decodeForm cancelTables jCanReadArity with
+        | .error m =>
+          (m.splitOn "application of a head of kind 'Fquant'").length > 1
         | _ => false)
 
 end Golden

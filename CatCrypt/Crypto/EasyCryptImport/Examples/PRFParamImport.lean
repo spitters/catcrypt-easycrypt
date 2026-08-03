@@ -49,7 +49,8 @@ witness for this theory: a point mass on the carrier has total mass one, so
 `PRFLaws` is inhabited and the imported hypothesis set of `PseudoRF` is
 satisfiable.
 
-`Ty.lean` fixes the carrier of `EcTy.opaque "Top.PseudoRF.K"` at `Int`, so every
+`Ty.lean` fixes the carrier of `EcTy.opaque "Top.PseudoRF.K"` at `Carrier` on that
+path, so every
 proposition here is at that carrier, and the witness is a distribution on it.
 
 The decode of the exported items — the `Th_operator` declaration and the
@@ -147,7 +148,7 @@ theorem prfDKLosslessAt_iff (D : PRFData) :
 /-- The closed statement quantifies over the realization, at the type `dK`'s
 declaration gives it. -/
 theorem prfDKLosslessProp_iff :
-    prfDKLosslessProp ↔ ∀ dK : SDistr Int, SDistr.mass dK = 1 := by
+    prfDKLosslessProp ↔ ∀ dK : SDistr (Carrier "Top.PseudoRF.K"), SDistr.mass dK = 1 := by
   simp only [prfDKLosslessProp, importedProp, prfDKLossless, prfDKLosslessBody,
     transForm_allConst, transForm_isLossless, evalTerm_opApp, FormEnv.bindConst,
     OpEnv.bindConst, OpEnv.bindOp_same]
@@ -155,11 +156,11 @@ theorem prfDKLosslessProp_iff :
 /-! ## The committed realization -/
 
 /-- The realization that puts all mass on one key. -/
-noncomputable def PRFData.pointMass (k : Int) : PRFData := ⟨SDistr.pure k⟩
+noncomputable def PRFData.pointMass (k : Carrier "Top.PseudoRF.K") : PRFData := ⟨SDistr.pure k⟩
 
 /-- `PseudoRF`'s imported hypotheses hold at the point mass, so the hypothesis set
 is satisfiable and a statement proved under it is not vacuous. -/
-theorem PRFData.pointMassLaws (k : Int) : PRFLaws (PRFData.pointMass k) :=
+theorem PRFData.pointMassLaws (k : Carrier "Top.PseudoRF.K") : PRFLaws (PRFData.pointMass k) :=
   ⟨(prfDKLosslessAt_iff _).2 (SDistr.mass_pure k)⟩
 
 /-- The closed reading is refutable: the failed computation is a realization of

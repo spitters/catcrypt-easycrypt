@@ -53,7 +53,8 @@ nothing in a build detects an unsatisfiable imported hypothesis set.
 theory: a point mass on the carrier has total mass one, so `UUFKOALaws` is
 inhabited and the premise the lemma is stated under is satisfiable.
 
-`Ty.lean` fixes the carrier of `EcTy.opaque "Top.msg_t"` at `Int`, so every
+`Ty.lean` fixes the carrier of `EcTy.opaque "Top.msg_t"` at `Carrier` on that path,
+so every
 proposition here is at that carrier, and the witness is a distribution on it.
 
 The decode of the exported items — the operator declaration, the `Axiom` item and
@@ -154,7 +155,8 @@ noncomputable def uufkoaDmsgLosslessPropNoPremise : Prop :=
 axiom of its scope. -/
 theorem uufkoaDmsgLosslessProp_iff :
     uufkoaDmsgLosslessProp
-      ↔ ∀ dmsg : SDistr Int, SDistr.mass dmsg = 1 → SDistr.mass dmsg = 1 := by
+      ↔ ∀ dmsg : SDistr (Carrier "Top.msg_t"),
+          SDistr.mass dmsg = 1 → SDistr.mass dmsg = 1 := by
   simp only [uufkoaDmsgLosslessProp, importedProp, uufkoaDmsgLossless,
     uufkoaDmsgLosslessBody, transForm_allConst, transForm_imp,
     transForm_isLossless, FormEnv.bindConst, OpEnv.bindConst]
@@ -167,7 +169,8 @@ theorem uufkoaDmsgLosslessProp_holds : uufkoaDmsgLosslessProp :=
 
 /-- Without the premise the statement quantifies over every realization. -/
 theorem uufkoaDmsgLosslessPropNoPremise_iff :
-    uufkoaDmsgLosslessPropNoPremise ↔ ∀ dmsg : SDistr Int, SDistr.mass dmsg = 1 := by
+    uufkoaDmsgLosslessPropNoPremise
+      ↔ ∀ dmsg : SDistr (Carrier "Top.msg_t"), SDistr.mass dmsg = 1 := by
   simp only [uufkoaDmsgLosslessPropNoPremise, importedProp,
     uufkoaDmsgLosslessNoPremise, uufkoaDmsgLosslessBody, transForm_allConst,
     transForm_isLossless, FormEnv.bindConst, OpEnv.bindConst]
@@ -212,11 +215,11 @@ theorem uufkoaDmsgLosslessAt_iff (D : UUFKOAData) :
   rfl
 
 /-- The realization that puts all mass on one message. -/
-noncomputable def UUFKOAData.pointMass (m : Int) : UUFKOAData := ⟨SDistr.pure m⟩
+noncomputable def UUFKOAData.pointMass (m : Carrier "Top.msg_t") : UUFKOAData := ⟨SDistr.pure m⟩
 
 /-- `UUFKOAROM`'s imported hypotheses hold at the point mass, so the premise the
 lemma is stated under is satisfiable and the lemma is not vacuous. -/
-theorem UUFKOAData.pointMassLaws (m : Int) : UUFKOALaws (UUFKOAData.pointMass m) :=
+theorem UUFKOAData.pointMassLaws (m : Carrier "Top.msg_t") : UUFKOALaws (UUFKOAData.pointMass m) :=
   ⟨(uufkoaDmsgLosslessAt_iff _).2 (SDistr.mass_pure m)⟩
 
 /-- The assembled lemma, instantiated at a realization meeting the imported

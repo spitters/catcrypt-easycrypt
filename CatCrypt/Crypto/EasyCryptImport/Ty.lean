@@ -75,14 +75,28 @@ is what uniform sampling and a `CatCrypt.Core.Location` are stated against.
 An abstract EasyCrypt type has no structure, so its faithful image would be a
 type parameter supplied at lowering time. `EcTy.interp` is a plain function to
 `Type` — every instance and every consumer of the AST applies it with no
-environment in scope — so the code fixes a carrier instead: `interp` sends every
-`opaque` code to `Int`, a countable, inhabited, non-finite type. Like the `fin n`
-cardinality and the `oget` default, the carrier is a decision the ingestion
-records where EasyCrypt leaves the matter open: a theorem about the imported
-program is a theorem at that instantiation, not a theorem for every carrier. The
-code carries the abstract type's path, so two abstract types are distinct codes
-and the type-directed decoder keeps them apart even though their carriers
-coincide.
+environment in scope — so the code fixes a carrier instead: `interp` sends the
+code `opaque p` to `Carrier p`, a one-field wrapper over `Int` whose type index
+is the abstract type's path.
+
+The index is part of the type, so two abstract types denote two Lean types:
+`Top.pkey` and `Top.skey` are distinct codes and `Carrier "Top.pkey"` and
+`Carrier "Top.skey"` are distinct interpretations, and a statement about one is
+not a statement about the other. The wrapper is not definitionally `Int`, so
+arithmetic and order on `Int` are not available at the carrier without passing
+through `Carrier.val`. Inhabitation, decidable equality and countability come
+from the `Int` field: that is what `hasEq` at an `opaque` code and a heap cell
+(`CatCrypt.Core.GLocation`) require. The carrier is infinite, so `isFin` is
+false at the code and no uniform sampling lives there.
+
+Like the `fin n` cardinality and the `oget` default, the carrier is a decision
+the ingestion records where EasyCrypt leaves the matter open: a theorem about the
+imported program is a theorem at that instantiation, not a theorem for every
+carrier. What it does not do is make the axioms of a theory satisfiable at the
+carrier. `Carrier p` is a countably infinite type carrying no operations, so a
+theory that declares operators over its abstract type and states axioms about
+them still needs a per-theory realization witness — the operators exhibited at
+the carrier, with the axioms discharged there.
 
 ## What an EasyCrypt datatype denotes
 
@@ -167,6 +181,18 @@ set_option autoImplicit false
 
 namespace CatCrypt.Crypto.EasyCryptImport
 
+/-- The carrier of an abstract EasyCrypt type, indexed by that type's path: a
+one-field wrapper over `Int`. Distinct paths are distinct types, and the wrapper
+is not definitionally `Int`. -/
+structure Carrier (path : String) where
+  /-- The underlying integer. -/
+  val : Int
+  deriving DecidableEq, Repr, Inhabited
+
+instance carrierCountable (path : String) : Countable (Carrier path) :=
+  Function.Injective.countable (f := Carrier.val)
+    (fun a b h => by cases a; cases b; exact congrArg Carrier.mk h)
+
 /-- Codes for the types the importer accepts. -/
 inductive EcTy where
   /-- EasyCrypt's `unit`. -/
@@ -204,8 +230,8 @@ inductive EcTy where
   imported hypotheses. -/
   | intRange (lo hi : Int) (ne : lo < hi := by omega)
   /-- An abstract EasyCrypt type, carried by its path and interpreted at the
-  fixed carrier `Int` (see the module docstring). Distinct paths are distinct
-  codes. -/
+  path-indexed carrier `Carrier name` (see the module docstring). Distinct paths
+  are distinct codes and distinct interpretations. -/
   | opaque (name : String)
   deriving DecidableEq, Repr
 
@@ -225,7 +251,7 @@ per-universe instance chain. -/
   | .fset a => Finset a.interp
   | .distr a => CatCrypt.Prob.SDistr a.interp
   | .intRange lo hi _ => {x : Int // lo ≤ x ∧ x < hi}
-  | .opaque _ => Int
+  | .opaque p => Carrier p
 
 /-- A computable inhabitant of `SDistr α`: the failed computation, all mass on
 `none`, written as a match so the value needs no decidable equality on `α`;
@@ -253,7 +279,7 @@ instance interpInhabited : (t : EcTy) → Inhabited t.interp
   | .fset a => inferInstanceAs (Inhabited (Finset a.interp))
   | .distr a => ⟨sdistrDefault a.interp⟩
   | .intRange lo _ h => ⟨⟨lo, le_refl lo, h⟩⟩
-  | .opaque _ => inferInstanceAs (Inhabited Int)
+  | .opaque p => inferInstanceAs (Inhabited (Carrier p))
 
 /-- The codes whose interpretation has decidable equality and is countable —
 exactly the codes without a distribution inside. `decEqOfHasEq` and
@@ -321,7 +347,7 @@ def decEqOfHasEq : (t : EcTy) → t.hasEq = true → DecidableEq t.interp
   | .distr _, h => absurd h (by simp)
   | .intRange lo hi hne, _ =>
       inferInstanceAs (DecidableEq {x : Int // lo ≤ x ∧ x < hi})
-  | .opaque _, _ => inferInstanceAs (DecidableEq Int)
+  | .opaque p, _ => inferInstanceAs (DecidableEq (Carrier p))
 
 /-- The countability of a `hasEq` code's interpretation, which is what a heap
 cell (`CatCrypt.Core.GLocation`) requires: a distribution's carrier is
@@ -352,7 +378,7 @@ uncountable, so a module variable cannot live at a `distr` code, and
   | .distr _, h => absurd h (by simp)
   | .intRange lo hi _, _ =>
       inferInstanceAs (Countable {x : Int // lo ≤ x ∧ x < hi})
-  | .opaque _, _ => inferInstanceAs (Countable Int)
+  | .opaque p, _ => inferInstanceAs (Countable (Carrier p))
 
 instance interpNonempty (t : EcTy) : Nonempty t.interp := ⟨default⟩
 

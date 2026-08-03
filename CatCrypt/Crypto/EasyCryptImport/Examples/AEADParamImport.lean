@@ -42,7 +42,8 @@ readings are here, and they are different propositions:
   field a `Laws` structure carries and the premise a lemma of the theory is
   stated under.
 * `aeadEncLosslessProp` is the statement closed over its parameter, which is
-  `∀ enc : Int × Int × Int → SDistr Int, ∀ k a m : Int,
+  `∀ enc : Carrier "Top.K" × Carrier "Top.AData" × Carrier "Top.Msg" →
+  SDistr (Carrier "Top.Cph"), ∀ k a m,
   SDistr.mass (enc (k, a, m)) = 1` (`aeadEncLosslessProp_iff`). That is the
   reading an `axiom_kind: Lemma` item of a declaring theory gets. It is not what
   the source asserts about `enc`, and it is refutable
@@ -168,25 +169,31 @@ structure AEADLaws (D : AEADData) : Prop where
 /-- The hypothesis at a realization is that every ciphertext distribution it
 gives has total mass one. -/
 theorem aeadEncLosslessAt_iff (D : AEADData) :
-    aeadEncLosslessAt D ↔ ∀ k a m : Int, SDistr.mass (D.enc k a m) = 1 :=
+    aeadEncLosslessAt D
+      ↔ ∀ (k : Carrier "Top.K") (a : Carrier "Top.AData") (m : Carrier "Top.Msg"),
+          SDistr.mass (D.enc k a m) = 1 :=
   Iff.rfl
 
 /-- The closed statement quantifies over the realization, at the function type
 the declared signature gives it. -/
 theorem aeadEncLosslessProp_iff :
-    aeadEncLosslessProp ↔ ∀ enc : Int × Int × Int → SDistr Int, ∀ k a m : Int,
-      SDistr.mass (enc (k, a, m)) = 1 :=
+    aeadEncLosslessProp
+      ↔ ∀ enc : Carrier "Top.K" × Carrier "Top.AData" × Carrier "Top.Msg"
+              → SDistr (Carrier "Top.Cph"),
+          ∀ (k : Carrier "Top.K") (a : Carrier "Top.AData") (m : Carrier "Top.Msg"),
+            SDistr.mass (enc (k, a, m)) = 1 :=
   Iff.rfl
 
 /-! ## The committed realization -/
 
 /-- The realization that answers every argument with one ciphertext. -/
-noncomputable def AEADData.pointMass (c : Int) : AEADData :=
+noncomputable def AEADData.pointMass (c : Carrier "Top.Cph") : AEADData :=
   ⟨fun _ _ _ => SDistr.pure c⟩
 
 /-- The imported hypotheses hold at the point mass, so the hypothesis set is
 satisfiable and a statement proved under it is not vacuous. -/
-theorem AEADData.pointMassLaws (c : Int) : AEADLaws (AEADData.pointMass c) :=
+theorem AEADData.pointMassLaws (c : Carrier "Top.Cph") :
+    AEADLaws (AEADData.pointMass c) :=
   ⟨(aeadEncLosslessAt_iff _).2 (fun _ _ _ => SDistr.mass_pure c)⟩
 
 /-- The closed reading is refutable: the failed computation is a realization of
@@ -195,6 +202,6 @@ mass zero, so quantifying `enc_ll` over every realization states something
 theorem not_aeadEncLosslessProp : ¬ aeadEncLosslessProp := by
   rw [aeadEncLosslessProp_iff]
   intro h
-  simpa using h (fun _ => SDistr.fail) 0 0 0
+  simpa using h (fun _ => SDistr.fail) default default default
 
 end CatCrypt.Crypto.EasyCryptImport.Examples.AEADParamImport

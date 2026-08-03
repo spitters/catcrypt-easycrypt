@@ -25,8 +25,10 @@ proposition quantifying over the codes.
 
 * `pairSurjAtOpaque` is the statement at the opaque code of each parameter's
   reserved path, which is what `decodeAxiom` produces when no assignment is
-  given. `Ty.lean` fixes the carrier of an opaque code at `Int`, so this reading
-  is `∀ v : Int × Int, v = (v.1, v.2)` (`pairSurjAtOpaque_iff`): the source
+  given. `Ty.lean` fixes the carrier of an opaque code at `Carrier` on its path,
+  so this reading is
+  `∀ v : Carrier "#tyvar.'a" × Carrier "#tyvar.'b", v = (v.1, v.2)`
+  (`pairSurjAtOpaque_iff`): the source
   statement at one abstract type per parameter, a consequence of the source's and
   not the whole of it.
 * `pairSurjProp` is the statement closed over its parameters, which is
@@ -118,7 +120,8 @@ theorem pairSurjProp_iff :
 /-- The reading at the opaque codes is the statement at the carrier `Ty.lean`
 fixes for an abstract type. -/
 theorem pairSurjAtOpaque_iff :
-    pairSurjAtOpaque ↔ ∀ v : Int × Int, v = (v.1, v.2) := by
+    pairSurjAtOpaque
+      ↔ ∀ v : Carrier "#tyvar.'a" × Carrier "#tyvar.'b", v = (v.1, v.2) := by
   simp only [pairSurjAtOpaque, importedProp, pairSurj, transForm_allTy,
     transForm_eqT, evalTerm_var, evalTerm_pair, evalTerm_fst, evalTerm_snd,
     FormEnv.bindVar, Env.read_update_same]
