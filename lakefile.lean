@@ -18,6 +18,14 @@ lean_lib CatCrypt where
   -- `catcryptCore` supplies the `CatCryptCore.*` module names alone, so the shims
   -- that carry the `CatCrypt.*` names are part of this library.
   globs := #[.submodules `CatCrypt]
+  -- `-E <kind>` reports Lean messages of that kind as errors. `hasSorry` is the
+  -- kind Lean attaches to a declaration whose proof term reaches `sorryAx`, so
+  -- building this library refuses such a declaration outright and no separate
+  -- step has to read the build's output. The word in a comment, a docstring or a
+  -- string literal carries no such message and is unaffected, and a declaration
+  -- that reaches `sorryAx` through a tactic carries one even though the word
+  -- appears nowhere in its source.
+  moreLeanArgs := #["-E", "hasSorry"]
 
 -- The CatCrypt methodology basis: `SPComp`, sub-distributions, the pRHL and pHL
 -- rule sets, `Advantage`, the generic heap, and non-uniform sampling — the targets
