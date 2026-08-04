@@ -40,9 +40,24 @@ jobs:
         run: lake exe cache get || true
 
       - name: Build
-        run: lake build CatCrypt.Crypto.EasyCryptImport.All
+        run: lake build CatCrypt.Crypto.EasyCryptImport.All 2>&1 | tee build.log
 
       - name: Check for sorry
-        # The AST-level linter, which is what the check has to be: `grep sorry`
-        # reports comments and prose.
-        run: lake build CatCrypt.Crypto.EasyCryptImport.All -- --run-linter=sorryIn
+        # Lean's own AST-level diagnostic. A declaration whose proof term reaches
+        # `sorryAx` is reported as "declaration uses `sorry`" (message kind
+        # `hasSorry`), and the message is replayed for modules served from cache,
+        # so the build above covers every module it reaches. A source grep would
+        # instead report the word in comments and docstrings, and would miss a
+        # declaration that reaches `sorryAx` through a tactic.
+        #
+        # `lake build <module> -- --run-linter=sorryIn` is not the check: Lean
+        # 4.30 has no `--run-linter` flag and Lake 5 forwards no arguments after
+        # `--` on `build`, so that command runs no linter and its success is
+        # uninformative.
+        run: |
+          if grep -q 'declaration uses .sorry' build.log; then
+            grep -n 'declaration uses .sorry' build.log
+            echo "::error::a declaration in the importer uses sorry"
+            exit 1
+          fi
+          echo "No declaration uses sorry."
