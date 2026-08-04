@@ -40,24 +40,21 @@ jobs:
         run: lake exe cache get || true
 
       - name: Build
-        run: lake build CatCrypt.Crypto.EasyCryptImport.All 2>&1 | tee build.log
+        # Wrapped by the gate, which records the build's diagnostics for the
+        # check below and propagates the build's own exit status.
+        run: scripts/sorry-gate.sh run lake build CatCrypt.Crypto.EasyCryptImport.All
 
       - name: Check for sorry
-        # Lean's own AST-level diagnostic. A declaration whose proof term reaches
-        # `sorryAx` is reported as "declaration uses `sorry`" (message kind
-        # `hasSorry`), and the message is replayed for modules served from cache,
-        # so the build above covers every module it reaches. A source grep would
-        # instead report the word in comments and docstrings, and would miss a
-        # declaration that reaches `sorryAx` through a tactic.
-        #
-        # `lake build <module> -- --run-linter=sorryIn` is not the check: Lean
-        # 4.30 has no `--run-linter` flag and Lake 5 forwards no arguments after
-        # `--` on `build`, so that command runs no linter and its success is
-        # uninformative.
-        run: |
-          if grep -q 'declaration uses .sorry' build.log; then
-            grep -n 'declaration uses .sorry' build.log
-            echo "::error::a declaration in the importer uses sorry"
-            exit 1
-          fi
-          echo "No declaration uses sorry."
+        # The gate reads Lean's `hasSorry` diagnostic out of the build log and
+        # ratchets it against scripts/sorry-baseline.txt. A declaration whose
+        # proof term reaches `sorryAx` produces that diagnostic even when the
+        # word appears nowhere in the source, and a `sorry` in a comment or a
+        # docstring produces none, which is why the check reads the compiler
+        # rather than the sources.
+        run: scripts/sorry-gate.sh check
+
+      - name: Baseline is committed
+        # The gate rewrites the baseline downward when a count falls. An
+        # uncommitted rewrite means the run tightened the ratchet and the
+        # tightening was never recorded.
+        run: git diff --exit-code scripts/sorry-baseline.txt

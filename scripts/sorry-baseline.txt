@@ -1,0 +1,6 @@
+# Per-file sorry allowance, from a build that covered the CI target set.
+# A file's count may FALL (the baseline auto-tightens) but never RISE, and a
+# file absent here may not acquire one. Coverage is the build's coverage:
+# the modules CatCrypt.Crypto.EasyCryptImport.All reaches, and no others.
+# Initialize: scripts/sorry-gate.sh --init  (after a full CI-equivalent build)
+# Format: <count><TAB><path>
