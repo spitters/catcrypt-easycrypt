@@ -774,7 +774,38 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
       fail s!"match term in {j.compress}: EcTy has no sum or inductive codes, so \
         there is nothing to match on"
     else if kind = "Fquant" then
-      fail s!"quantified term in {j.compress}: EcTerm has no binder"
+      -- A lambda over a single binder is `EcTerm.lam`, which is what the source
+      -- supplies for the function argument of a list combinator. Every other
+      -- quantifier binds a proposition and belongs to `EcForm`.
+      match getStr j "quant" with
+      | .ok "Llambda" =>
+        match t with
+        | .arrow a b =>
+          match getArr j "binders" with
+          | .error e => .error e
+          | .ok bs =>
+            match bs.toList with
+            | [bd] =>
+              match getNat bd "stamp", getStr bd "name" with
+              | .ok st, .ok nm =>
+                match _hbl : F.bindLocal st nm with
+                | .error e => .error e
+                | .ok F' =>
+                  match _hlb : getObj j "body" with
+                  | .error e => .error e
+                  | .ok body =>
+                    match decodeTerm F' b body with
+                    | .error e => .error e
+                    | .ok e => .ok (.lam a (F.localBindName st nm) e)
+              | _, _ =>
+                fail s!"a lambda binder without a stamp and a name in {j.compress}"
+            | bds =>
+              fail s!"a lambda over {bds.length} binders in {j.compress}: the term \
+                layer builds a function one binder at a time"
+        | _ =>
+          fail s!"a lambda in {j.compress} where the context expects \
+            {repr t}, which is not an arrow code"
+      | _ => fail s!"quantified term in {j.compress}: EcTerm has no binder"
     else if kind = "Fpr" then
       fail s!"probability in term position in {j.compress}: a probability is an \
         EcProb, not an EcTerm"
@@ -852,8 +883,54 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                     fail s!"the abstract operator '{p}' is declared at result \
                       type {repr s.res}, context expects {repr t}"
                 else
-                  fail s!"the abstract operator '{p}' is declared at argument \
-                    type {repr s.arg} and read with no argument"
+                  -- An abstract operator read with no argument is being passed
+                  -- as a function, which is how `iterop` and the `big` family
+                  -- take their operator. `opApp` takes its arguments as a
+                  -- right-nested product, so the reading is one lambda per
+                  -- argument over an application at the product of them. The
+                  -- binder names carry a `#`, which no source identifier holds,
+                  -- so neither can capture a variable the statement binds.
+                  let n1 := p ++ "#1"
+                  let n2 := p ++ "#2"
+                  match t with
+                  | .arrow a (.arrow b c) =>
+                    if h1 : s.arg = EcTy.prod a b then
+                      if h2 : s.res = c then
+                        .ok (.lam a n1 (.lam b n2
+                          (EcTerm.castTy h2 (.opApp p s
+                            (EcTerm.castTy h1.symm
+                              (.pair (.var a n1) (.var b n2)))))))
+                      else
+                        fail s!"the abstract operator '{p}' is declared at result \
+                          type {repr s.res} and read as a function returning \
+                          {repr c}"
+                    else if h1 : s.arg = a then
+                      if h2 : s.res = EcTy.arrow b c then
+                        .ok (.lam a n1 (EcTerm.castTy h2 (.opApp p s
+                          (EcTerm.castTy h1.symm (.var a n1)))))
+                      else
+                        fail s!"the abstract operator '{p}' is declared at result \
+                          type {repr s.res} and read as a function returning \
+                          {repr (EcTy.arrow b c)}"
+                    else
+                      fail s!"the abstract operator '{p}' is declared at argument \
+                        type {repr s.arg} and read as a function of {repr a} and \
+                        {repr b}"
+                  | .arrow a b =>
+                    if h1 : s.arg = a then
+                      if h2 : s.res = b then
+                        .ok (.lam a n1 (EcTerm.castTy h2 (.opApp p s
+                          (EcTerm.castTy h1.symm (.var a n1)))))
+                      else
+                        fail s!"the abstract operator '{p}' is declared at result \
+                          type {repr s.res} and read as a function returning \
+                          {repr b}"
+                    else
+                      fail s!"the abstract operator '{p}' is declared at argument \
+                        type {repr s.arg} and read as a function of {repr a}"
+                  | _ =>
+                    fail s!"the abstract operator '{p}' is declared at argument \
+                      type {repr s.arg} and read with no argument"
               | none =>
                 -- A concrete declaration of the theory the statement comes from
                 -- is a definition, read as the term it abbreviates. The body is
@@ -1305,6 +1382,198 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                           fail s!"'{p}' is applied to a value of type {repr u}, \
                             which is not a list"
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    -- The combinators take their function argument first and the
+                    -- list second, and the element code is read off the list
+                    -- argument's own type field rather than the result's, which
+                    -- for `all`, `has` and `count` does not mention it.
+                    -- `choiceb P x0` has the type of its default, so the result
+                    -- code fixes the predicate's argument code and no type field
+                    -- has to be read.
+                    -- `Logic.ec` writes `pred1 c x = (x = c)`, so a full read is
+                    -- an equality and a read at one argument is the predicate
+                    -- that equality gives, as a lambda over the other side.
+                    | .pred1, .bool =>
+                      match arr.toList.attach with
+                      | [⟨cJ, _⟩, ⟨xJ, _⟩] =>
+                        match decodeTyField F.tables cJ "ty" with
+                        | .error e => .error e
+                        | .ok a =>
+                          match decodeTerm F a cJ with
+                          | .error e => .error e
+                          | .ok ce =>
+                            match decodeTerm F a xJ with
+                            | .error e => .error e
+                            | .ok xe => .ok (.beq xe ce)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .pred1, .arrow a .bool =>
+                      match arr.toList.attach with
+                      | [⟨cJ, _⟩] =>
+                        match decodeTerm F a cJ with
+                        | .error e => .error e
+                        | .ok ce => .ok (.lam a (p ++ "#1")
+                            (.beq (.var a (p ++ "#1")) ce))
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    -- `iter` and `iterop` return the type they iterate over, so
+                    -- the result code fixes every argument's code.
+                    | .iter, u =>
+                      match arr.toList.attach with
+                      | [⟨nJ, _⟩, ⟨fJ, _⟩, ⟨xJ, _⟩] =>
+                        match decodeTerm F .int nJ with
+                        | .error e => .error e
+                        | .ok ne =>
+                          match decodeTerm F (.arrow u u) fJ with
+                          | .error e => .error e
+                          | .ok fe =>
+                            match decodeTerm F u xJ with
+                            | .error e => .error e
+                            | .ok xe => .ok (.iter ne fe xe)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 3"
+                    | .iterop, u =>
+                      match arr.toList.attach with
+                      | [⟨nJ, _⟩, ⟨oJ, _⟩, ⟨xJ, _⟩, ⟨zJ, _⟩] =>
+                        match decodeTerm F .int nJ with
+                        | .error e => .error e
+                        | .ok ne =>
+                          match decodeTerm F (.arrow u (.arrow u u)) oJ with
+                          | .error e => .error e
+                          | .ok oe =>
+                            match decodeTerm F u xJ with
+                            | .error e => .error e
+                            | .ok xe =>
+                              match decodeTerm F u zJ with
+                              | .error e => .error e
+                              | .ok ze => .ok (.iterop ne oe xe ze)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 4"
+                    | .choiceb, u =>
+                      match arr.toList.attach with
+                      | [⟨pJ, _⟩, ⟨dJ, _⟩] =>
+                        match decodeTerm F (.arrow u .bool) pJ with
+                        | .error e => .error e
+                        | .ok pe =>
+                          match decodeTerm F u dJ with
+                          | .error e => .error e
+                          | .ok de => .ok (.choiceb pe de)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    -- `odflt d o` and `oget o`. The option is any term, and
+                    -- `oget` takes the code's canonical inhabitant as its
+                    -- default, which is what EasyCrypt's own `oget` answers on
+                    -- an absent value.
+                    | .mapOdflt, u =>
+                      match arr.toList.attach with
+                      | [⟨dJ, _⟩, ⟨oJ, _⟩] =>
+                        match decodeTerm F (.option u) oJ with
+                        | .error e => .error e
+                        | .ok oe =>
+                          match decodeTerm F u dJ with
+                          | .error e => .error e
+                          | .ok de => .ok (.optionGetD oe de)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .mapOget, u =>
+                      match arr.toList.attach with
+                      | [⟨oJ, _⟩] =>
+                        match decodeTerm F (.option u) oJ with
+                        | .error e => .error e
+                        | .ok oe => .ok (.optionGetD oe (.lit default))
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    | .someE, .option a =>
+                      match arr.toList.attach with
+                      | [⟨xJ, _⟩] =>
+                        match decodeTerm F a xJ with
+                        | .error e => .error e
+                        | .ok xe => .ok (.someT xe)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    | .listUniq, .bool =>
+                      match arr.toList.attach with
+                      | [⟨lJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          if !a.hasEq then
+                            fail s!"'{p}' at the element type {repr a}: the test \
+                              compares elements, and that type has no decidable \
+                              equality"
+                          else
+                            match decodeTerm F (.list a) lJ with
+                            | .error e => .error e
+                            | .ok le => .ok (.listUniq le)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                    | .listMap, .list b =>
+                      match arr.toList.attach with
+                      | [⟨fJ, _⟩, ⟨lJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          match decodeTerm F (.arrow a b) fJ with
+                          | .error e => .error e
+                          | .ok fe =>
+                            match decodeTerm F (.list a) lJ with
+                            | .error e => .error e
+                            | .ok le => .ok (.listMap fe le)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .listFilter, .list a =>
+                      match arr.toList.attach with
+                      | [⟨pJ, _⟩, ⟨lJ, _⟩] =>
+                        match decodeTerm F (.arrow a .bool) pJ with
+                        | .error e => .error e
+                        | .ok pe =>
+                          match decodeTerm F (.list a) lJ with
+                          | .error e => .error e
+                          | .ok le => .ok (.listFilter pe le)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .listAll, .bool =>
+                      match arr.toList.attach with
+                      | [⟨pJ, _⟩, ⟨lJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          match decodeTerm F (.arrow a .bool) pJ with
+                          | .error e => .error e
+                          | .ok pe =>
+                            match decodeTerm F (.list a) lJ with
+                            | .error e => .error e
+                            | .ok le => .ok (.listAll pe le)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .listHas, .bool =>
+                      match arr.toList.attach with
+                      | [⟨pJ, _⟩, ⟨lJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          match decodeTerm F (.arrow a .bool) pJ with
+                          | .error e => .error e
+                          | .ok pe =>
+                            match decodeTerm F (.list a) lJ with
+                            | .error e => .error e
+                            | .ok le => .ok (.listHas pe le)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .listCount, .int =>
+                      match arr.toList.attach with
+                      | [⟨pJ, _⟩, ⟨lJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          match decodeTerm F (.arrow a .bool) pJ with
+                          | .error e => .error e
+                          | .ok pe =>
+                            match decodeTerm F (.list a) lJ with
+                            | .error e => .error e
+                            | .ok le => .ok (.listCount pe le)
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                     | .listMem, .bool =>
                       match arr.toList.attach with
                       | [⟨lJ, _⟩, ⟨xJ, _⟩] =>

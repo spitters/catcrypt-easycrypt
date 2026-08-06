@@ -610,6 +610,76 @@ def EcTy.listRcons {a : EcTy} (l : (EcTy.list a).interp) (x : a.interp) :
 def EcTy.listSize {a : EcTy} (l : (EcTy.list a).interp) : Int :=
   ((show List a.interp from l).length : Int)
 
+open Classical in
+/-- EasyCrypt's `choiceb`: an element the predicate holds of when there is one,
+and the given default otherwise.
+
+`Logic.ec` defines `choiceb P x0 = if exists x, P x then choicebd P else x0`,
+where `choicebd` is an abstract operator whose only law is that `P (choicebd P)`
+holds once some element satisfies `P`. `Exists.choose` is that operator: it is
+determined by the proposition, so the same `P` picks the same element, and
+`Exists.choose_spec` is the law. -/
+noncomputable def EcTy.choiceb {a : EcTy} (p : a.interp → Bool) (x0 : a.interp) :
+    a.interp :=
+  if h : ∃ x, p x = true then h.choose else x0
+
+/-- `k` applications of `f`, the `i`-th of them at the index `i`. -/
+def EcTy.iteriNat {a : EcTy} :
+    Nat → (Int → a.interp → a.interp) → a.interp → a.interp
+  | 0, _, x => x
+  | k + 1, f, x => f (k : Int) (EcTy.iteriNat k f x)
+
+/-- EasyCrypt's `iteri`, an abstract operator whose laws are `iteri n f x = x`
+at `n <= 0` and `iteri (n+1) f x = f n (iteri n f x)` at `0 <= n`. Iterating
+`n.toNat` times satisfies both: a non-positive `n` iterates none, and at
+`0 <= n` the index the step is applied at is `n` itself. -/
+def EcTy.iteri {a : EcTy} (n : Int) (f : Int → a.interp → a.interp)
+    (x : a.interp) : a.interp :=
+  EcTy.iteriNat n.toNat f x
+
+/-- EasyCrypt's `iter`: `iteri` with the index dropped. -/
+def EcTy.iter {a : EcTy} (n : Int) (f : a.interp → a.interp) (x : a.interp) :
+    a.interp :=
+  EcTy.iteri n (fun _ y => f y) x
+
+/-- EasyCrypt's `iterop`, defined there as
+`iterop n opr x z = iteri n (fun i y => if i <= 0 then x else opr x y) z`. -/
+def EcTy.iterop {a : EcTy} (n : Int)
+    (opr : a.interp → a.interp → a.interp) (x z : a.interp) : a.interp :=
+  EcTy.iteri n (fun i y => if i ≤ 0 then x else opr x y) z
+
+/-- The image of a list under a function, EasyCrypt's `map`. -/
+def EcTy.listMap {a b : EcTy} (f : a.interp → b.interp)
+    (l : (EcTy.list a).interp) : (EcTy.list b).interp :=
+  show List b.interp from (show List a.interp from l).map f
+
+/-- The elements a predicate holds of, in order, EasyCrypt's `filter`. -/
+def EcTy.listFilter {a : EcTy} (p : a.interp → Bool)
+    (l : (EcTy.list a).interp) : (EcTy.list a).interp :=
+  show List a.interp from (show List a.interp from l).filter p
+
+/-- Whether a predicate holds of every element, EasyCrypt's `all`. -/
+def EcTy.listAll {a : EcTy} (p : a.interp → Bool)
+    (l : (EcTy.list a).interp) : Bool :=
+  (show List a.interp from l).all p
+
+/-- Whether a predicate holds of some element, EasyCrypt's `has`. -/
+def EcTy.listHas {a : EcTy} (p : a.interp → Bool)
+    (l : (EcTy.list a).interp) : Bool :=
+  (show List a.interp from l).any p
+
+/-- How many elements a predicate holds of, EasyCrypt's `count`. -/
+def EcTy.listCount {a : EcTy} (p : a.interp → Bool)
+    (l : (EcTy.list a).interp) : Int :=
+  (((show List a.interp from l).filter p).length : Int)
+
+/-- Whether a list repeats no element, EasyCrypt's `uniq`, at the element code
+`a`. -/
+def EcTy.listUniq {a : EcTy} (l : (EcTy.list a).interp)
+    (hEq : a.hasEq = true := by rfl) : Bool :=
+  letI := decEqOfHasEq a hEq
+  decide ((show List a.interp from l).Nodup)
+
 /-- Whether `x` is an element of `l`, at the element code `a`. -/
 def EcTy.listMem {a : EcTy}
     (l : (EcTy.list a).interp) (x : a.interp)
@@ -630,6 +700,13 @@ def EcTy.noneVal {a : EcTy} : (EcTy.option a).interp :=
 /-- The present option value at the element code `a`. -/
 def EcTy.someVal {a : EcTy} (x : a.interp) : (EcTy.option a).interp :=
   show Option a.interp from some x
+
+/-- The value an option carries, or `d` where it carries none: EasyCrypt's
+`odflt d o`. `oget o` is this at the code's canonical inhabitant, which is what
+EasyCrypt's own `oget` answers on `None`. -/
+def EcTy.optionGetD {a : EcTy} (o : (EcTy.option a).interp) (d : a.interp) :
+    a.interp :=
+  (show Option a.interp from o).getD d
 
 /-! ## Finite sets
 

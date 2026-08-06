@@ -355,6 +355,26 @@ inductive EcOpKind where
   | listMem
   /-- The `i`-th element of a list or a default, EasyCrypt's `nth`. -/
   | listNth
+  /-- EasyCrypt's `choiceb`, classical choice with a default. -/
+  | choiceb
+  /-- EasyCrypt's `pred1`, the predicate that holds of one element. -/
+  | pred1
+  /-- EasyCrypt's `iter`, a function applied a number of times. -/
+  | iter
+  /-- EasyCrypt's `iterop`, a binary operator applied a number of times. -/
+  | iterop
+  /-- Whether a list repeats no element, EasyCrypt's `uniq`. -/
+  | listUniq
+  /-- The image of a list under a function, EasyCrypt's `map`. -/
+  | listMap
+  /-- The elements a predicate holds of, EasyCrypt's `filter`. -/
+  | listFilter
+  /-- Whether a predicate holds of every element, EasyCrypt's `all`. -/
+  | listAll
+  /-- Whether a predicate holds of some element, EasyCrypt's `has`. -/
+  | listHas
+  /-- How many elements a predicate holds of, EasyCrypt's `count`. -/
+  | listCount
   deriving DecidableEq, Repr
 
 /-- The distribution operators of the accepted fragment, as dispatch-table
@@ -510,6 +530,27 @@ structure DecodeTables where
   names the subtype and the reason instead of reporting a path the ingestion
   never saw. -/
   pendingSubtypes : List (String × String)
+  /-- Subtype declarations registered at an opaque carrier because the export
+  carries no inhabitation witness for them. Every `EcTy` code is inhabited, so
+  the registration asserts the subtype is non-empty; EasyCrypt's own `Subtype`
+  clone demands a witness, which makes the assertion true wherever the source
+  went through it, but the ingestion assumes it rather than reading it. The
+  survey reports an item naming one of these paths as parameterised, never as
+  closed, so no statement counts as decoded on the strength of the assumption. -/
+  assumedNonempty : List String
+  /-- Subtype declarations registered at an opaque carrier whose non-emptiness
+  the export names a lemma for, keyed by the subtype's path at that lemma's. The
+  source proved the subtype inhabited, so the registration assumes nothing of its
+  own and an item over such a subtype may still close. The pair is kept so the
+  lemma each one rests on can be named. -/
+  witnessedNonempty : List (String × String)
+  /-- The `Th_module` items of the envelope, keyed by the path they declare.
+  A nested `ME_Alias` names a functor applied to the enclosing module's binders,
+  and the functor's body is an item of its own, so resolving the alias needs the
+  envelope's items and not only what earlier ones registered. The item is held
+  as the exporter wrote it: a decoded module cannot live here, since its type is
+  declared after these tables. -/
+  modItems : List (String × Json)
   /-- The path of the module being decoded, against which a call target is
   recognised as intra-module. -/
   modPath : String
@@ -564,7 +605,34 @@ def ecPrelude : DecodeTables where
      ("Top.List.rcons", .listRcons),
      ("Top.List.size", .listSize),
      ("Top.List.mem", .listMem),
-     ("Top.List.nth", .listNth)]
+     ("Top.List.nth", .listNth),
+     ("Top.List.uniq", .listUniq),
+     ("Top.List.map", .listMap),
+     ("Top.List.filter", .listFilter),
+     ("Top.List.all", .listAll),
+     ("Top.List.has", .listHas),
+     ("Top.List.count", .listCount),
+     -- `List.ec` roots its own declarations at `Top`, so it declares `all` at
+     -- `Top.all`, and an envelope that reads the theory unqualified writes that
+     -- spelling rather than `Top.List.all`. Both name the same operator. A bare
+     -- name another theory happens to use is caught by the decode arm, which
+     -- checks the argument is a list before building the term.
+     ("Top.::", .listCons),
+     ("Top.rcons", .listRcons),
+     ("Top.size", .listSize),
+     ("Top.mem", .listMem),
+     ("Top.nth", .listNth),
+     ("Top.uniq", .listUniq),
+     ("Top.map", .listMap),
+     ("Top.filter", .listFilter),
+     ("Top.all", .listAll),
+     ("Top.has", .listHas),
+     ("Top.count", .listCount),
+     ("Top.Logic.choiceb", .choiceb),
+     ("Top.choiceb", .choiceb),
+     ("Top.Logic.pred1", .pred1),
+     ("Top.Int.IterOp.iter", .iter),
+     ("Top.Int.IterOp.iterop", .iterop)]
   distrPaths := ["Top.DBool.dbool"]
   distrOpPaths :=
     [("Top.Distr.MUnit.dunit", .dunit),
@@ -583,6 +651,9 @@ def ecPrelude : DecodeTables where
   globals := []
   procSigs := []
   pendingSubtypes := []
+  assumedNonempty := []
+  witnessedNonempty := []
+  modItems := []
   modPath := ""
 
 /-- Extend the tables with a finite scalar type of cardinality `n`, read from the
@@ -1269,13 +1340,19 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                                 fail s!"'{gp}' applied to {garr.size} arguments, \
                                   expected 2"
                           | _ =>
-                            fail s!"'{p}' applied to '{gp}' in {j.compress}: the \
-                              only argument of oget with an image is a finite-map \
-                              lookup"
-                    | .ok k =>
-                      fail s!"'{p}' applied to a node of kind '{k}' in \
-                        {j.compress}: the only argument of oget with an image is \
-                        a finite-map lookup"
+                            -- Any other option takes the general elimination, at
+                            -- the code's canonical inhabitant, which is what
+                            -- EasyCrypt's `oget` answers on an absent value. The
+                            -- lookup shape above is kept because it reads as
+                            -- `EcExpr.mapGetD`, one node rather than a lookup
+                            -- under an eliminator.
+                            match decodeExpr T (.option u) getJ with
+                            | .error e => .error e
+                            | .ok oe => .ok (.optionGetD oe (.lit default))
+                    | .ok _ =>
+                      match decodeExpr T (.option u) getJ with
+                      | .error e => .error e
+                      | .ok oe => .ok (.optionGetD oe (.lit default))
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
                 | .mapOdflt, u =>
                   match arr.toList.attach with
@@ -1320,13 +1397,23 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                                 fail s!"'{gp}' applied to {garr.size} arguments, \
                                   expected 2"
                           | _ =>
-                            fail s!"'{p}' applied to '{gp}' in {j.compress}: the \
-                              second argument of odflt has an image only as a \
-                              finite-map lookup"
-                    | .ok k =>
-                      fail s!"'{p}' applied to a node of kind '{k}' in \
-                        {j.compress}: the second argument of odflt has an image \
-                        only as a finite-map lookup"
+                            -- Any other option value takes the general
+                            -- elimination. The lookup shape above is kept
+                            -- because it reads as `EcExpr.mapGetD`, which is one
+                            -- node rather than a lookup under an eliminator.
+                            match decodeExpr T (.option u) getJ with
+                            | .error e => .error e
+                            | .ok oe =>
+                              match decodeExpr T u dJ with
+                              | .error e => .error e
+                              | .ok de => .ok (.optionGetD oe de)
+                    | .ok _ =>
+                      match decodeExpr T (.option u) getJ with
+                      | .error e => .error e
+                      | .ok oe =>
+                        match decodeExpr T u dJ with
+                        | .error e => .error e
+                        | .ok de => .ok (.optionGetD oe de)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                 | .someE, .option a =>
                   match arr.toList.attach with
@@ -1451,8 +1538,25 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
           fail s!"application of a head of kind '{k}': the AST applies operators \
             only, and has no higher-order application"
     | .ok "Eif" =>
-      fail s!"conditional expression in {j.compress}: EcExpr has no conditional, \
-        and EcStmt.ite is the only image of a branch"
+      -- Both branches are expressions, at the code the conditional itself has.
+      match _hc : getObj j "cond" with
+      | .error e => .error e
+      | .ok cJ =>
+        match _ht : getObj j "then" with
+        | .error e => .error e
+        | .ok tJ =>
+          match _he : getObj j "else" with
+          | .error e => .error e
+          | .ok eJ =>
+            match decodeExpr T .bool cJ with
+            | .error e => .error e
+            | .ok ce =>
+              match decodeExpr T t tJ with
+              | .error e => .error e
+              | .ok te =>
+                match decodeExpr T t eJ with
+                | .error e => .error e
+                | .ok ee => .ok (.ite ce te ee)
     | .ok "Elet" =>
       fail s!"let expression in {j.compress}: EcExpr has no binder, and \
         EcStmt.assign is the only image of a local binding"
@@ -1464,6 +1568,11 @@ termination_by jsonSize j
 decreasing_by
   all_goals first
     | exact getObj_decreases _htgt
+    -- The branches and the condition of a conditional expression are fields of
+    -- it, so each is smaller than the node.
+    | exact getObj_decreases _hc
+    | exact getObj_decreases _ht
+    | exact getObj_decreases _he
     | exact Nat.lt_trans
         (getArr_decreases _hginO (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›))
         (getArr_decreases _harr (Array.mem_toList_iff.mp _hgetO))
@@ -1745,7 +1854,17 @@ def decodeDistr (T : DecodeTables) (t : EcTy) (j : Json) :
       match getStr j "path" with
       | .error e => .error e
       | .ok p =>
-        if !T.distrPaths.contains p then
+        if (List.lookup p T.absOpPaths).any
+             (fun s => s.arg = EcTy.unit && s.res = EcTy.distr t) then
+          -- A theory declares `op d : t distr` abstractly, so the module that
+          -- samples from it is parameterised by it rather than fixed. The
+          -- reading is the free program variable named by the operator's path:
+          -- `Env` is total, so lowering answers whatever the caller binds there,
+          -- and nothing here asserts which distribution it is. A caller that
+          -- binds nothing gets the canonical inhabitant, which is why a game
+          -- over an abstract distribution says something only under a binding.
+          .ok (.ofExpr (.var (.distr t) (EcVarId.ofName p)))
+        else if !T.distrPaths.contains p then
           fail s!"distribution '{p}' is not one of the ingestion's uniform \
             distributions, so it has no EcDistr.uniform image"
         else if h : t.isFin = true then .ok (.uniform t h)
@@ -2065,8 +2184,22 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
       match decodeLv T lvJ with
       | .error e => .error e
       | .ok (.glob g) =>
-        fail s!"sampling into the global '{g.name}': EcStmt.sample writes a \
-          local variable"
+        -- Sampling writes a local, so a sample into a global is the sample into
+        -- a scratch local followed by the store the AST already has. The scratch
+        -- name carries a `#`, which no source identifier holds, and `Env` is
+        -- total, so it needs no declaration.
+        match getObj j "distr" with
+        | .error e => .error e
+        | .ok dJ =>
+          match decodeDistr T g.ty dJ with
+          | .error e => .error e
+          | .ok d =>
+            let tmp := g.name ++ "#rnd"
+            let draw :=
+              match d.uniformFin with
+              | some h => EcStmt.sample g.ty tmp h.down
+              | none => EcStmt.sampleD g.ty tmp d
+            .ok (.stmts [draw] (.store g (.var g.ty tmp)))
       | .ok (.loc x t) =>
         match getObj j "distr" with
         | .error e => .error e
@@ -2199,8 +2332,16 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
             match decodeLv T lvJ with
             | .error e => .error e
             | .ok (.glob g) =>
-              fail s!"call result assigned to the global '{g.name}': \
-                EcStmt.callProc writes a local variable"
+              -- A call writes a local, so a call into a global is the call into
+              -- a scratch local followed by the store, after whatever loads the
+              -- arguments' global reads hoisted.
+              match decodeCallArgs T g.ty argsA' with
+              | .error e => .error e
+              | .ok ⟨s, arg⟩ =>
+                let tmp := g.name ++ "#res"
+                let pre := hargs.map (fun h => EcStmt.load h (hoistedGlobal h.name))
+                .ok (.stmts (pre ++ [.callProc q s arg tmp])
+                  (.store g (.var g.ty tmp)))
             | .ok (.loc x t) =>
               match decodeCallArgs T t argsA' with
               | .error e => .error e
@@ -2442,9 +2583,15 @@ def decodeProc (T : DecodeTables) (j : Json) : Except String DecodedProc := do
     let bodyA ← getArr defJ "body"
     let body ← decodeStmts T bodyA.toList
     let retJ ← getObj defJ "ret"
-    let ret ← decodeRet T s.res retJ
+    -- A return expression reads globals the same way a statement's does, and
+    -- reaches them the same way: through a load. The loads go after the body,
+    -- since what the return reads is the value the body leaves.
+    let (rgs, retJ') := hoistGlobalReads T retJ
+    let ret ← decodeRet T s.res retJ'
+    let tail := rgs.map (fun g => EcStmt.load g (hoistedGlobal g.name))
     .ok { name := name, locals := locals
-          sp := { sig := s, proc := { params := params, body := body, ret := ret } } }
+          sp := { sig := s
+                  proc := { params := params, body := body ++ tail, ret := ret } } }
   | "FBalias" =>
     let pr ← decodeAliasBody T name s params defJ
     .ok { name := name, locals := [], sp := { sig := s, proc := pr } }
@@ -2484,6 +2631,53 @@ def checkDeclared (name : String) (ps : List DecodedProc)
         fail s!"procedure '{n}' of module '{name}' is declared at a signature \
           other than the one its body has")
 
+/-- The functor path and the argument names an `ME_Alias` target writes:
+`Top.Wrap(S)` is `("Top.Wrap", ["S"])`, and a target with no argument list is
+the path alone. -/
+def splitAliasTarget (tgt : String) : String × List String :=
+  match tgt.splitOn "(" with
+  | [p] => (p, [])
+  | p :: rest =>
+    let inner := (String.intercalate "(" rest).replace ")" ""
+    (p, (inner.splitOn ",").map (·.trim))
+  | [] => (tgt, [])
+
+/-- The `ME_Structure` body of the module item at `path`, and the names of the
+parameters it takes. A nested alias resolves against these. -/
+def aliasedBody (T : DecodeTables) (path : String) :
+    Except String (List String × Json) := do
+  match List.lookup path T.modItems with
+  | none =>
+    fail s!"the alias names '{path}', which is not a module item of this \
+      envelope, so its body is not available to resolve against"
+  | some it =>
+    let mJ ← getObj it "module"
+    let paramsA ← getArr mJ "params"
+    let ps ← paramsA.toList.mapM (fun p => getIdent p "name")
+    let bodyJ ← getObj mJ "body"
+    let bk ← getStr bodyJ "kind"
+    if bk ≠ "ME_Structure" then
+      fail s!"the alias names '{path}', whose body is '{bk}': only a structure \
+        body has procedures to resolve against"
+    else .ok (ps, bodyJ)
+
+/-- The globals an `ME_Structure` body declares, named under `mpath` and living
+at heap ids from `baseId` upwards in declaration order. -/
+def decodeModuleVars (T : DecodeTables) (baseId : Nat) (mpath : String)
+    (bodyJ : Json) : Except String (List EcGlobal) := do
+  let varsA ← getArr bodyJ "vars"
+  (varsA.toList.zip (List.range varsA.size)).mapM
+    (fun (v, i) => do
+      let nm ← getIdent v "name"
+      let t ← decodeTyField T v "ty"
+      if hEq : t.hasEq then
+        .ok ({ name := xqualify mpath nm, id := baseId + i, ty := t
+               hasEq := hEq } : EcGlobal)
+      else
+        fail s!"module variable '{nm}' at the type {repr t}: a global lives in \
+          the heap at a countable type, and a distribution's carrier is not \
+          countable, so the variable has no heap cell")
+
 /-- Decode the `ME_Structure` body and declared signatures of a module item at
 the module's source name and path. This is the part a concrete module and a
 functor body have in common. -/
@@ -2496,42 +2690,73 @@ def decodeStructureBody (T : DecodeTables) (baseId : Nat) (name mpath : String)
       module image"
   else
     let modsA ← getArr bodyJ "modules"
-    if !modsA.isEmpty then
-      let describe := fun (mJ : Json) =>
-        let n := (getStr mJ "name").toOption.getD "?"
-        match mJ.getObjVal? "body" with
-        | .ok mbJ =>
-          let bk := (getStr mbJ "kind").toOption.getD "?"
-          match getStr mbJ "target" with
-          | .ok tgt => s!"'{n}' ({bk} of '{tgt}')"
-          | .error _ => s!"'{n}' ({bk})"
-        | .error _ => s!"'{n}'"
-      let ds := String.intercalate ", " (modsA.toList.map describe)
-      fail s!"module '{name}' nests {ds}, which the AST does not nest: a \
-        nested ME_Alias names a module resolved against the enclosing module's \
-        binders, and a nested ME_Structure reads the enclosing module's state \
-        or parameters, so neither is a top-level module under another name"
-    else
-      let varsA ← getArr bodyJ "vars"
-      let gs ← (varsA.toList.zip (List.range varsA.size)).mapM
-        (fun (v, i) => do
-          let nm ← getIdent v "name"
-          let t ← decodeTyField T v "ty"
-          if hEq : t.hasEq then
-            .ok ({ name := xqualify mpath nm, id := baseId + i, ty := t
-                   hasEq := hEq } : EcGlobal)
-          else
-            fail s!"module variable '{nm}' at the type {repr t}: a global \
-              lives in the heap at a countable type, and a distribution's \
-              carrier is not countable, so the variable has no heap cell")
-      let T' := { gs.foldl DecodeTables.withGlobal T with modPath := mpath }
-      let procsA ← getArr bodyJ "procs"
-      let ps ← procsA.toList.mapM (decodeProc T')
-      let declA ← getArr modJ "sig"
-      let declared ← declA.toList.mapM (decodeSigDecl T')
-      checkDeclared name ps declared
-      .ok { name := name, path := mpath, globals := gs, procs := ps
-            declared := declared }
+    -- A nested `ME_Structure` is a module defined inside this one. It is not a
+    -- top-level module under another name — its procedures read this module's
+    -- state and its parameters — so it is flattened here: its variables become
+    -- variables of this module at their own qualified names, and its procedures
+    -- join this module's table under `<nested>.<proc>`, which is the name a call
+    -- inside this module writes for them. A nested `ME_Alias` is a functor
+    -- applied to this module's binders, and resolving it needs the functor's
+    -- body, which lives in another item of the envelope.
+    -- The names this module takes as parameters. An alias headed by one of them
+    -- is that parameter applied, and a parameter is a binder rather than a
+    -- module: it has no body and no state of its own, and its procedures are
+    -- whatever the environment binds the parameter to, wherever this module is
+    -- applied. Such an alias therefore contributes nothing to flatten. A call to
+    -- it that the environment does not answer is reported where the call is.
+    let ownParams : List String :=
+      match getArr modJ "params" with
+      | .ok pa => pa.toList.filterMap (fun p => (getIdent p "name").toOption)
+      | .error _ => []
+    let nestedOpt ← modsA.toList.mapM (fun mJ => do
+      let n ← getIdent mJ "name"
+      let mbJ ← getObj mJ "body"
+      let bk2 ← getStr mbJ "kind"
+      -- The path a nested body's own statements name its globals at: a
+      -- structure written here is under this module, while an alias is the
+      -- functor's body and names them at the functor's path.
+      if bk2 = "ME_Structure" then .ok (some (n, mpath ++ "." ++ n, mbJ))
+      else if bk2 = "ME_Alias" then
+        -- The alias is a functor applied to this module's binders. Application
+        -- is a binding rather than a rewrite: `Lower` applies a functor by
+        -- binding the parameter's prefix in the `ProcEnv`, so the body's calls
+        -- resolve where the argument carries the parameter's name. Resolving
+        -- the alias is therefore taking the functor's body, and the argument
+        -- names have to be the parameter names for those calls to land.
+        let tgt ← getStr mbJ "target"
+        let (fpath, args) := splitAliasTarget tgt
+        if ownParams.contains fpath then .ok none
+        else
+          let (ps, fbody) ← aliasedBody T fpath
+          if ps ≠ args then
+            fail s!"module '{name}' nests '{n}' as '{tgt}': '{fpath}' takes \
+              {ps} and the alias supplies {args}, and the body's calls name the \
+              parameters, so only an argument under the parameter's own name \
+              resolves without renaming them"
+          else .ok (some (n, fpath, fbody))
+      else
+        fail s!"module '{name}' nests '{n}' ({bk2}), which has no body to \
+          resolve against")
+    let nested := nestedOpt.filterMap id
+    let ownVars ← decodeModuleVars T baseId mpath bodyJ
+    -- Ids run on from this module's own variables, so no two globals share one.
+    let nestedGs ← (nested.zip (List.range nested.length)).mapM
+      (fun ((_, gpath, mbJ), k) =>
+        decodeModuleVars T (baseId + ownVars.length + 1000 * (k + 1)) gpath mbJ)
+    let gs := ownVars ++ nestedGs.flatten
+    let T' := { gs.foldl DecodeTables.withGlobal T with modPath := mpath }
+    let procsA ← getArr bodyJ "procs"
+    let ownPs ← procsA.toList.mapM (decodeProc T')
+    let nestedPs ← nested.mapM (fun (n, _, mbJ) => do
+      let pa ← getArr mbJ "procs"
+      let ps ← pa.toList.mapM (decodeProc T')
+      .ok (ps.map (fun d => { d with name := qualify n d.name })))
+    let ps := ownPs ++ nestedPs.flatten
+    let declA ← getArr modJ "sig"
+    let declared ← declA.toList.mapM (decodeSigDecl T')
+    checkDeclared name ps declared
+    .ok { name := name, path := mpath, globals := gs, procs := ps
+          declared := declared }
 
 /-- Decode a `Th_module` item whose body is an `ME_Structure` and which takes no
 parameter. -/
@@ -3049,6 +3274,32 @@ def DecodeTables.withPendingSubtype (T : DecodeTables) (path why : String) :
     DecodeTables :=
   { T with pendingSubtypes := (path, why) :: T.pendingSubtypes }
 
+/-- Record that `path` names a subtype registered at an opaque carrier, whose
+non-emptiness the ingestion assumes because the export carries no witness. -/
+def DecodeTables.withAssumedNonempty (T : DecodeTables) (path : String) :
+    DecodeTables :=
+  { T with assumedNonempty := path :: T.assumedNonempty }
+
+/-- Record the `Th_module` item at `path`, so a nested alias naming it can be
+resolved against the body the exporter wrote. -/
+def DecodeTables.withModItem (T : DecodeTables) (path : String) (j : Json) :
+    DecodeTables :=
+  { T with modItems := (path, j) :: T.modItems }
+
+/-- Every `Th_module` item of `items`, keyed by the path it declares. -/
+def registerModItems (T : DecodeTables) (items : List Json) : DecodeTables :=
+  items.foldl (fun T it =>
+    match getStr it "kind", getStr it "path" with
+    | .ok "Th_module", .ok p => T.withModItem p it
+    | _, _ => T) T
+
+/-- Record that `path` names a subtype registered at an opaque carrier whose
+non-emptiness the source proves in the lemma at `witness`. -/
+def DecodeTables.withWitnessedNonempty (T : DecodeTables)
+    (path witness : String) : DecodeTables :=
+  { T with witnessedNonempty := (path, witness) :: T.witnessedNonempty }
+
+
 /-- A decode error as the reason a table entry carries: the message without the
 stage tag the rest of it is read with. -/
 def reasonOf (m : String) : String :=
@@ -3061,8 +3312,44 @@ def subtypePathOf (j : Json) : Option String :=
   | .ok "Th_type", .ok path, .ok declJ =>
     match declJ.getObjVal? "subtype" with
     | .ok Json.null | .error _ => none
-    | .ok _ => some path
+    | .ok _ =>
+      -- An item whose body is `Concrete` is an alias, and the `subtype` payload
+      -- it carries describes the type it aliases rather than one it declares.
+      -- `Top.ZModRing.ZModpRing.t = Top.ZModRing.zmod` is such an item: reading
+      -- it as a declaration registers a second opaque carrier for `zmod` and
+      -- books an assumption that belongs to `zmod`, if to anything.
+      match declJ.getObjVal? "body" with
+      | .ok bodyJ =>
+        match getStr bodyJ "kind" with
+        | .ok "Abstract" => some path
+        | _ => none
+      | .error _ => some path
   | _, _, _ => none
+
+/-- The path of the lemma a `Th_type` item names as the witness that its subtype
+is non-empty, when it names one. EasyCrypt's `subtype` clone demands such a
+witness, and the export writes it as the `nonempty` field of the payload, `null`
+where the declaration carries none. A subtype with a witness is non-empty on the
+source's authority, so registering it at an opaque carrier assumes nothing the
+source did not already prove. -/
+def subtypeNonemptyOf (j : Json) : Option String :=
+  match j.getObjVal? "decl" with
+  | .ok declJ =>
+    match declJ.getObjVal? "subtype" with
+    | .ok subJ =>
+      match subJ.getObjVal? "nonempty" with
+      | .ok Json.null | .error _ => none
+      | .ok neJ => (getStr neJ "path").toOption
+    | .error _ => none
+  | .error _ => none
+
+/-- Register `path` at an opaque carrier, recorded as witnessed when the item
+names a non-emptiness lemma and as assumed when it does not. -/
+def DecodeTables.withOpaqueSubtype (T : DecodeTables) (path : String)
+    (it : Json) : DecodeTables :=
+  match subtypeNonemptyOf it with
+  | some w => (T.withOpaqueType path).withWitnessedNonempty path w
+  | none => (T.withOpaqueType path).withAssumedNonempty path
 
 /-- The `subtype` declarations among `items`, in declaration order, theory-inner
 declarations included. -/
@@ -3089,13 +3376,21 @@ def registerThTypeSubtypes (T : DecodeTables) (P : RangePredPaths)
     match subtypePathOf it with
     | none => T
     | some path =>
+      -- A subtype the ingestion holds no checked code for registers at an
+      -- opaque carrier: its statements decode, at the cost of asserting the
+      -- subtype is non-empty, which the export carries no witness for. The path
+      -- is recorded so the survey reports every item naming it as parameterised.
       match decodeThTypeSubtype T P it with
-      | .error m => T.withPendingSubtype path (reasonOf m)
+      | .error _ => T.withOpaqueSubtype path it
       | .ok d =>
         match d.codeAt β with
         | .ok t => T.withSubtype d t
         | .error m =>
-          if (List.lookup d.pred.boundPath β).isNone then T.withOpaqueType d.path
+          -- A realization that empties the range stays an error. The subtype is
+          -- then known to be empty, so an opaque carrier would assert something
+          -- false rather than something merely unwitnessed.
+          if (List.lookup d.pred.boundPath β).isNone then
+            T.withOpaqueSubtype d.path it
           else T.withPendingSubtype path (reasonOf m)) T
 
 /-- Extend the tables with every declaration of `items` that declares a type, in
@@ -3119,10 +3414,18 @@ def registerThTypeDecls (T : DecodeTables) (items : List Json) : DecodeTables :=
         | .error _ => T) T
 
 /-- Extend the tables with every type declaration of `items`, and with the
-`subtype` declarations at the realization `β` of their bounds. -/
+`subtype` declarations at the realization `β` of their bounds.
+
+The plain declarations register twice, around the subtypes. An alias whose
+right-hand side is a subtype has no code on the first pass, since the subtype
+registers on the pass after it; the second pass is where it resolves, and an
+entry registered there is prepended, so it is the one a read finds. Without it
+such an alias keeps whatever the subtype pass left it, which for a clone's
+carrier is an opaque code of its own rather than the type it aliases. -/
 def registerThTypesAt (T : DecodeTables) (items : List Json)
     (P : RangePredPaths) (β : SubtypeBounds) : DecodeTables :=
-  registerThTypeSubtypes (registerThTypeDecls T items) P β items
+  registerThTypeDecls
+    (registerThTypeSubtypes (registerThTypeDecls T items) P β items) items
 
 /-- Extend the tables with every type declaration of `items` at the empty
 realization: the abstract types, the aliases and the enumerations register at
@@ -4179,12 +4482,16 @@ private def jThTypeSubtype : Json :=
             "ec-import: type declaration 'Top.word' carries a subtype predicate"
         | _ => false)
 
--- Registration skips a subtype declaration rather than registering the bare
--- carrier under the subtype's name.
+-- Registration gives a subtype declaration an opaque carrier keyed by its path,
+-- rather than the bare carrier the predicate cuts down.
 #guard (match decodeTy (registerThTypes ecPrelude [jThTypeSubtype])
             (jTyConstr "Top.word") with
-        | .error _ => true
+        | .ok (.opaque "Top.word") => true
         | _ => false)
+
+-- And the path is recorded as one whose non-emptiness the ingestion assumes.
+#guard (registerThTypes ecPrelude [jThTypeSubtype]).assumedNonempty
+  == ["Top.word"]
 
 /-! ### Abstract operator declarations
 
@@ -4657,14 +4964,19 @@ private def jPolySubtype : Json :=
              [("path", Json.str "Top.Poly.inhabited"),
               ("axiom_kind", Json.str "Lemma")])])])]
 
--- A subtype at a carrier with no code is registered as pending too, and a type
--- node at its path reports the carrier rather than an unread path.
+-- A subtype whose carrier has no code registers at an opaque carrier keyed by
+-- the subtype's own path, so statements over it decode.
 #guard (match decodeTy (registerThTypes ecPrelude [jPolySubtype])
             (jTyConstr "Top.Poly.poly") with
-        | .error m => m.startsWith
-            "ec-import: type path 'Top.Poly.poly' names a subtype the ingestion \
-             holds no code for: unknown type path 'Top.Poly.coeff'"
+        | .ok (.opaque "Top.Poly.poly") => true
         | _ => false)
+
+-- This declaration names a lemma for its non-emptiness, so the registration
+-- rests on the source's proof and assumes nothing of its own.
+#guard (registerThTypes ecPrelude [jPolySubtype]).witnessedNonempty
+  == [("Top.Poly.poly", "Top.Poly.inhabited")]
+
+#guard (registerThTypes ecPrelude [jPolySubtype]).assumedNonempty == []
 
 -- No realization gives it a code: the bound of the recognised predicate is not
 -- what it waits on.

@@ -234,8 +234,16 @@ inductive EcExpr : EcTy → Type where
   /-- The binding of a key in a finite map, or a default when it is unbound. -/
   | mapGetD {a b : EcTy} (m : EcExpr (.map a b)) (k : EcExpr a) (d : EcExpr b) :
       EcExpr b
+  /-- A conditional expression, EasyCrypt's `e ? a : b`. Both branches are
+  expressions, so neither samples nor calls and the reading is a `Bool` test.
+  A branch that is a statement is `EcStmt.ite` instead. -/
+  | ite {t : EcTy} (c : EcExpr .bool) (thn els : EcExpr t) : EcExpr t
   /-- The present option value, EasyCrypt's `Some`. -/
   | someE {a : EcTy} (x : EcExpr a) : EcExpr (.option a)
+  /-- The value an option carries, or a default, EasyCrypt's `odflt`. `oget` is
+  this at the code's canonical inhabitant. The option is any expression, not
+  only a map lookup. -/
+  | optionGetD {a : EcTy} (o : EcExpr (.option a)) (d : EcExpr a) : EcExpr a
   /-- List cons, EasyCrypt's `::`. -/
   | listCons {a : EcTy} (x : EcExpr a) (l : EcExpr (.list a)) : EcExpr (.list a)
   /-- Appending one element at the end of a list, EasyCrypt's `rcons`. -/

@@ -223,7 +223,11 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
         EcTy.mapGetD (a := a) (b := b) (evalExpr m env) (evalExpr k env)
           (evalExpr d env) h
       else evalExpr d env
+  | _, .ite c thn els, env =>
+      if evalExpr c env then evalExpr thn env else evalExpr els env
   | _, .someE (a := a) x, env => EcTy.someVal (a := a) (evalExpr x env)
+  | _, .optionGetD (a := a) o d, env =>
+      EcTy.optionGetD (a := a) (evalExpr o env) (evalExpr d env)
   | _, .listCons (a := a) x l, env =>
       EcTy.listCons (a := a) (evalExpr x env) (evalExpr l env)
   | _, .listRcons (a := a) l x, env =>

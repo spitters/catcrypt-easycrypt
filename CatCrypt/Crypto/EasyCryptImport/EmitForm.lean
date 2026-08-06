@@ -292,6 +292,11 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
         .ok s!"({nm} {a})"
   | _, .app f x, C => do
     let g ← emitShallowTerm f C; let a ← emitShallowTerm x C; .ok s!"({g} {a})"
+  | _, .lam a x body, C =>
+    let (nm, C') := C.fresh x
+    let C'' := { C' with locals := (x, nm) :: C'.locals }
+    do let b ← emitShallowTerm body C''
+       .ok s!"(fun {nm} : {emitTy a}.interp => {b})"
   | _, .bnot e, C => do let a ← emitShallowTerm e C; .ok s!"(!{a})"
   | _, .band a b, C => do
     let x ← emitShallowTerm a C; let y ← emitShallowTerm b C; .ok s!"({x} && {y})"
@@ -328,6 +333,40 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
     .ok s!"(EcTy.listCons {a} {b})"
   | _, .listSize l, C => do
     let a ← emitShallowTerm l C; .ok s!"(EcTy.listSize {a})"
+  | _, .iter n f x, C => do
+    let a ← emitShallowTerm n C; let g ← emitShallowTerm f C
+    let b ← emitShallowTerm x C
+    .ok s!"(EcTy.iter {a} {g} {b})"
+  | _, .iterop n opr x z, C => do
+    let a ← emitShallowTerm n C; let g ← emitShallowTerm opr C
+    let b ← emitShallowTerm x C; let c ← emitShallowTerm z C
+    .ok s!"(EcTy.iterop {a} (fun u v => {g} u v) {b} {c})"
+  | _, .choiceb p x0, C => do
+    let q ← emitShallowTerm p C; let d ← emitShallowTerm x0 C
+    .ok s!"(EcTy.choiceb {q} {d})"
+  | _, .someT x, C => do
+    let a ← emitShallowTerm x C; .ok s!"(EcTy.someVal {a})"
+  | _, .optionGetD o d, C => do
+    let a ← emitShallowTerm o C; let b ← emitShallowTerm d C
+    .ok s!"(EcTy.optionGetD {a} {b})"
+  | _, .listUniq _, _ =>
+    fail "a list repetition test in a statement: its value is the test at the \
+      element code's decidable equality, which this printer does not render"
+  | _, .listMap f l, C => do
+    let g ← emitShallowTerm f C; let s ← emitShallowTerm l C
+    .ok s!"(EcTy.listMap {g} {s})"
+  | _, .listFilter p l, C => do
+    let q ← emitShallowTerm p C; let s ← emitShallowTerm l C
+    .ok s!"(EcTy.listFilter {q} {s})"
+  | _, .listAll p l, C => do
+    let q ← emitShallowTerm p C; let s ← emitShallowTerm l C
+    .ok s!"(EcTy.listAll {q} {s})"
+  | _, .listHas p l, C => do
+    let q ← emitShallowTerm p C; let s ← emitShallowTerm l C
+    .ok s!"(EcTy.listHas {q} {s})"
+  | _, .listCount p l, C => do
+    let q ← emitShallowTerm p C; let s ← emitShallowTerm l C
+    .ok s!"(EcTy.listCount {q} {s})"
   | _, .mapMem _ _, _ =>
     fail "a finite-map membership test in a statement: its value is the test at \
       the key code's decidable equality, which this printer does not render"

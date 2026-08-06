@@ -259,6 +259,34 @@ def moduleGlobalsOf (T : DecodeTables) (baseId : Nat) (j : Json) :
       let S ← decodeStructureBody T baseId name mpath varsOnly
       .ok (S.path, S.globals)
 
+/-- The procedure signatures a functor item contributes, at the cross-path a
+judgement names them by: the functor applied to its own parameters, which is how
+the exporter writes `Top.RandomLR(L, R)./main`. `decodeStructure` rejects a
+parameterised module, so nothing else registers them.
+
+A signature does not depend on which modules the parameters take, so one entry at
+the generic instance answers every application. -/
+def functorProcSigs (T : DecodeTables) (baseId : Nat) (it : Json) :
+    List (String × EcSig) :=
+  match getStr it "kind", getStr it "path", it.getObjVal? "module" with
+  | .ok "Th_module", .ok p, .ok mJ =>
+    match getArr mJ "params" with
+    | .ok pa =>
+      if pa.isEmpty then []
+      else
+        let names := pa.toList.filterMap (fun q => (getIdent q "name").toOption)
+        let applied := p ++ "(" ++ String.intercalate ", " names ++ ")"
+        let ofBody := fun (M : EcModule) =>
+          M.interface.names.map (fun q => (xqualify applied q, M.interface.sig q))
+        match decodeFunctorN T baseId it with
+        | .ok Fn => ofBody Fn.body
+        | .error _ =>
+          match decodeFunctor T baseId it with
+          | .ok Fa => ofBody Fa.body
+          | .error _ => []
+    | .error _ => []
+  | _, _, _ => []
+
 /-- Extend statement tables with one scope's items: the procedure signatures and
 globals of every item that decodes as a parameter-free module structure, the
 `var` footprint of every `Th_module` item whose declarations decode
@@ -274,8 +302,16 @@ Each module is decoded at a heap location range disjoint from every other's,
 starting at `F.nextLoc` and running in item order, because distinct modules hold
 distinct state: a shared range would make one module's footprint another's, and
 `globLocs` reads a footprint by location id alone. A module's footprint and its
-entry in the global table are decoded at the same base, so the two agree. -/
-def surveyExtendTables (F : FormTables) (items : List Json) : FormTables :=
+entry in the global table are decoded at the same base, so the two agree.
+
+A functor's procedures register too, at the spelling a judgement names them by
+(`functorProcSigs`). -/
+def surveyExtendTables (F0 : FormTables) (items : List Json) : FormTables :=
+  -- The module items go in first, keyed by path. A nested alias resolves
+  -- against a functor's body, and the functor may be declared after the module
+  -- that nests it, so what is registered is the whole list rather than what the
+  -- fold has reached.
+  let F := { F0 with tables := registerModItems F0.tables items }
   let alloc := items.foldl
     (fun (acc : Nat × List DecodedStructure × List (String × List EcGlobal)) it =>
       let (next, ss, fps) := acc
@@ -293,14 +329,15 @@ def surveyExtendTables (F : FormTables) (items : List Json) : FormTables :=
   let structs := alloc.2.1.reverse
   let footprints := alloc.2.2.reverse
   let T' := (structs.flatMap (·.globals)).foldl DecodeTables.withGlobal F.tables
-  let T'' := (structs.flatMap procSigsOfStructure).foldl
+  let fnSigs := items.flatMap (functorProcSigs F.tables F.nextLoc)
+  let T'' := (structs.flatMap procSigsOfStructure ++ fnSigs).foldl
     (fun T qs => T.withProcSig qs.1 qs.2) T'
   let modTypes := items.filterMap (fun it =>
     match getStr it "path", decodeModTypeInterface F.tables it with
     | .ok p, .ok I => some (p, I)
     | _, _ => none)
   { F with tables := T''
-           procSigs := structs.flatMap procSigsOfStructure ++ F.procSigs
+           procSigs := structs.flatMap procSigsOfStructure ++ fnSigs ++ F.procSigs
            modTypes := modTypes ++ F.modTypes
            modGlobals := footprints ++ F.modGlobals
            nextLoc := alloc.1 }
@@ -340,6 +377,27 @@ def assembledOpBinders : EcForm → Nat
   | .allOp _ _ body => assembledOpBinders body + 1
   | .allConst _ _ body => assembledOpBinders body + 1
   | _ => 0
+
+/-- The subtypes whose non-emptiness the ingestion assumes and whose path the
+source text `src` of an item names. The test is on the item as the export wrote
+it, so a path the statement mentions anywhere counts: over-counting moves an item
+out of the closed tally, which is the safe direction. A subtype the export gives
+a non-emptiness lemma for is not here, since the source proved that one. -/
+def assumedNamedBy (T : DecodeTables) (src : String) : List String :=
+  (T.assumedNonempty.filter (fun p => (src.splitOn p).length > 1)).eraseDups
+
+-- Naming an assumed subtype is what puts an item in the parameterised count.
+#guard assumedNamedBy { ecPrelude with assumedNonempty := ["Top.T"] }
+  "{\"path\":\"Top.T.ax\"}" == ["Top.T"]
+
+-- An item naming no assumed subtype is unaffected.
+#guard assumedNamedBy { ecPrelude with assumedNonempty := ["Top.T"] }
+  "{\"path\":\"Top.U.ax\"}" == []
+
+-- A subtype the export witnesses is not assumed, so it does not force the count.
+#guard assumedNamedBy
+  { ecPrelude with witnessedNonempty := [("Top.T", "Top.inh")] }
+  "{\"path\":\"Top.T.ax\"}" == []
 
 /-- Decode one envelope item with the decoder its kind and shape select: a
 `Th_module` decodes as a module, a functor or an n-ary functor by its parameter
@@ -393,14 +451,20 @@ def surveyDecodeItem (F : FormTables) (kind : String) (it : Json) :
     let _ ← decodeThOperatorAbstract F.tables it
     .ok (.param 1)
   | "Th_axiom" =>
+    -- A statement naming a subtype whose non-emptiness the ingestion assumes is
+    -- parameterised by that assumption, so it is never reported as closed. The
+    -- test is on the item as the export wrote it: a path the statement mentions
+    -- anywhere is one the statement may depend on.
+    let assumed := assumedNamedBy F.tables it.compress
     if itemAxiomKind it == some "Lemma" then
       let f ← decodeLemmaAt F (itemPath it)
-      let n := assembledOpBinders f
+      let n := assembledOpBinders f + assumed.length
       if n == 0 then .ok .closed else .ok (.param n)
     else
       let f ← decodeAxiom F it
       let ops := opsUnique f.opsOf
-      if ops.isEmpty then .ok .closed else .ok (.param ops.length)
+      let n := ops.length + assumed.length
+      if n == 0 then .ok .closed else .ok (.param n)
   | k => fail s!"no decoder for item kind '{k}'"
 
 /-- The survey lines and tally one envelope item contributes, labelled `label`
@@ -638,7 +702,14 @@ def qualifyEnvelopeTheory (th : String) (T T' : DecodeTables) : DecodeTables :=
     constPaths := qualifyAddedEntries th T.constPaths T'.constPaths
     absOpPaths := qualifyAddedEntries th T.absOpPaths T'.absOpPaths
     defOpPaths := qualifyAddedEntries th T.defOpPaths T'.defOpPaths
-    polyOpPaths := qualifyAddedEntries th T.polyOpPaths T'.polyOpPaths }
+    polyOpPaths := qualifyAddedEntries th T.polyOpPaths T'.polyOpPaths
+    -- The two subtype ledgers are facts about the corpus rather than entries
+    -- read at a path, so they accumulate across envelopes instead of being
+    -- rebuilt from `T`. Dropping them here left the survey with no record that a
+    -- subtype had been registered at an opaque carrier, and so nothing to force
+    -- an item over one out of the closed count.
+    assumedNonempty := T'.assumedNonempty
+    witnessedNonempty := T'.witnessedNonempty }
 
 /-- The tables an envelope of the theory `th` is surveyed against: `T`, followed
 by every entry of `T` under `th` keyed again by the path `th`'s own envelope

@@ -212,8 +212,14 @@ def emitExpr : {t : EcTy} → EcExpr t → String
   | _, @EcExpr.mapGetD a b m k d =>
       "(EcExpr.mapGetD (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
         ++ emitExpr m ++ " " ++ emitExpr k ++ " " ++ emitExpr d ++ ")"
+  | _, .ite c thn els =>
+      "(EcExpr.ite " ++ emitExpr c ++ " " ++ emitExpr thn ++ " "
+        ++ emitExpr els ++ ")"
   | _, @EcExpr.someE a x =>
       "(EcExpr.someE (a := " ++ emitTy a ++ ") " ++ emitExpr x ++ ")"
+  | _, @EcExpr.optionGetD a o d =>
+      "(EcExpr.optionGetD (a := " ++ emitTy a ++ ") " ++ emitExpr o ++ " "
+        ++ emitExpr d ++ ")"
   | _, @EcExpr.listCons a x l =>
       "(EcExpr.listCons (a := " ++ emitTy a ++ ") " ++ emitExpr x ++ " "
         ++ emitExpr l ++ ")"

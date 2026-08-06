@@ -261,10 +261,15 @@ inductive EcTerm : EcTy → Type where
   (`Params.lean`), which `EcForm.allOp` binds. -/
   | opApp (path : String) (s : EcSig) (arg : EcTerm s.arg) : EcTerm s.res
   /-- A function applied to an argument. The function is a term at an arrow
-  code, typically a logical variable `EcForm.allTy` bound at one. There is no
-  constructor building a function, so the applied term is always something the
-  statement quantifies over or reads. -/
+  code: a logical variable `EcForm.allTy` bound at one, or a `lam`. -/
   | app {a b : EcTy} (f : EcTerm (.arrow a b)) (x : EcTerm a) : EcTerm b
+  /-- The function taking `x`, a logical variable at the code `a`, to `body`.
+  This is EasyCrypt's `fun x => e` where the source writes one as an argument,
+  which is how the combinators of the list theories are applied: `map f s` reads
+  `f` at an arrow code, and the source supplies a lambda for it. Its reading
+  binds `x` in the ambient valuation, so `body` reads it through `var`. -/
+  | lam (a : EcTy) {b : EcTy} (x : String) (body : EcTerm b) :
+      EcTerm (.arrow a b)
   /-- Boolean negation. -/
   | bnot (e : EcTerm .bool) : EcTerm .bool
   /-- Boolean conjunction. -/
@@ -309,6 +314,38 @@ inductive EcTerm : EcTy → Type where
   | listSize {a : EcTy} (l : EcTerm (.list a)) : EcTerm .int
   /-- Membership in a list, EasyCrypt's `mem`. -/
   | listMem {a : EcTy} (l : EcTerm (.list a)) (x : EcTerm a) : EcTerm .bool
+  /-- EasyCrypt's `choiceb`: an element the predicate holds of when there is one,
+  and the second argument otherwise. -/
+  | choiceb {a : EcTy} (p : EcTerm (.arrow a .bool)) (x0 : EcTerm a) : EcTerm a
+  /-- EasyCrypt's `iter`: `n` applications of a function. -/
+  | iter {a : EcTy} (n : EcTerm .int) (f : EcTerm (.arrow a a)) (x : EcTerm a) :
+      EcTerm a
+  /-- EasyCrypt's `iterop`: `n` applications of a binary operator at a first
+  argument, from a starting value, and that value at `n <= 0`. -/
+  | iterop {a : EcTy} (n : EcTerm .int)
+      (opr : EcTerm (.arrow a (.arrow a a))) (x z : EcTerm a) : EcTerm a
+  /-- The present option value, EasyCrypt's `Some`. -/
+  | someT {a : EcTy} (x : EcTerm a) : EcTerm (.option a)
+  /-- The value an option carries, or a default, EasyCrypt's `odflt`. `oget` is
+  this at the code's canonical inhabitant. -/
+  | optionGetD {a : EcTy} (o : EcTerm (.option a)) (d : EcTerm a) : EcTerm a
+  /-- Whether a list repeats no element, EasyCrypt's `uniq`. -/
+  | listUniq {a : EcTy} (l : EcTerm (.list a)) : EcTerm .bool
+  /-- The image of a list under a function, EasyCrypt's `map`. -/
+  | listMap {a b : EcTy} (f : EcTerm (.arrow a b)) (l : EcTerm (.list a)) :
+      EcTerm (.list b)
+  /-- The elements a predicate holds of, in order, EasyCrypt's `filter`. -/
+  | listFilter {a : EcTy} (p : EcTerm (.arrow a .bool)) (l : EcTerm (.list a)) :
+      EcTerm (.list a)
+  /-- Whether a predicate holds of every element, EasyCrypt's `all`. -/
+  | listAll {a : EcTy} (p : EcTerm (.arrow a .bool)) (l : EcTerm (.list a)) :
+      EcTerm .bool
+  /-- Whether a predicate holds of some element, EasyCrypt's `has`. -/
+  | listHas {a : EcTy} (p : EcTerm (.arrow a .bool)) (l : EcTerm (.list a)) :
+      EcTerm .bool
+  /-- How many elements a predicate holds of, EasyCrypt's `count`. -/
+  | listCount {a : EcTy} (p : EcTerm (.arrow a .bool)) (l : EcTerm (.list a)) :
+      EcTerm .int
   /-- Membership in a finite set, EasyCrypt's `mem`. -/
   | fsetMem {a : EcTy} (s : EcTerm (.fset a)) (x : EcTerm a) : EcTerm .bool
   /-- A conditional term. -/
@@ -389,6 +426,7 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
   | _, .res _ _ => []
   | _, .opApp path s arg => (path, s) :: EcTerm.opsOf arg
   | _, .app f x => EcTerm.opsOf f ++ EcTerm.opsOf x
+  | _, .lam _ _ body => EcTerm.opsOf body
   | _, .bnot e => EcTerm.opsOf e
   | _, .band a b => EcTerm.opsOf a ++ EcTerm.opsOf b
   | _, .bxor a b => EcTerm.opsOf a ++ EcTerm.opsOf b
@@ -408,6 +446,18 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
   | _, .listCons x l => EcTerm.opsOf x ++ EcTerm.opsOf l
   | _, .listSize l => EcTerm.opsOf l
   | _, .listMem l x => EcTerm.opsOf l ++ EcTerm.opsOf x
+  | _, .choiceb p x0 => EcTerm.opsOf p ++ EcTerm.opsOf x0
+  | _, .iter n f x => EcTerm.opsOf n ++ EcTerm.opsOf f ++ EcTerm.opsOf x
+  | _, .iterop n opr x z =>
+      EcTerm.opsOf n ++ EcTerm.opsOf opr ++ EcTerm.opsOf x ++ EcTerm.opsOf z
+  | _, .someT x => EcTerm.opsOf x
+  | _, .optionGetD o d => EcTerm.opsOf o ++ EcTerm.opsOf d
+  | _, .listUniq l => EcTerm.opsOf l
+  | _, .listMap f l => EcTerm.opsOf f ++ EcTerm.opsOf l
+  | _, .listFilter p l => EcTerm.opsOf p ++ EcTerm.opsOf l
+  | _, .listAll p l => EcTerm.opsOf p ++ EcTerm.opsOf l
+  | _, .listHas p l => EcTerm.opsOf p ++ EcTerm.opsOf l
+  | _, .listCount p l => EcTerm.opsOf p ++ EcTerm.opsOf l
   | _, .fsetMem s x => EcTerm.opsOf s ++ EcTerm.opsOf x
   | _, .ite c thn els => EcTerm.opsOf c ++ EcTerm.opsOf thn ++ EcTerm.opsOf els
   | _, .letIn _ v body => EcTerm.opsOf v ++ EcTerm.opsOf body

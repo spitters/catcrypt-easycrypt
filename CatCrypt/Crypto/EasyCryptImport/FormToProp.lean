@@ -290,6 +290,7 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
   | _, .opApp path s arg, ρ => ρ.ops path s (evalTerm arg ρ)
   | _, .app (a := a) (b := b) f x, ρ =>
       (show a.interp → b.interp from evalTerm f ρ) (evalTerm x ρ)
+  | _, .lam a x body, ρ => fun v => evalTerm body (ρ.bindVar x ⟨a, v⟩)
   | _, .bnot e, ρ => !(evalTerm e ρ)
   | _, .band a b, ρ => (evalTerm a ρ) && (evalTerm b ρ)
   | _, .bxor a b, ρ => xor (evalTerm a ρ) (evalTerm b ρ)
@@ -330,6 +331,39 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
       if h : a.hasEq = true then
         EcTy.listMem (a := a) (evalTerm l ρ) (evalTerm x ρ) h
       else false
+  | _, .iter (a := a) n f x, ρ =>
+      EcTy.iter (a := a) (evalTerm n ρ)
+        (show a.interp → a.interp from evalTerm f ρ) (evalTerm x ρ)
+  | _, .iterop (a := a) n opr x z, ρ =>
+      EcTy.iterop (a := a) (evalTerm n ρ)
+        (fun u v =>
+          (show a.interp → a.interp from
+            (show a.interp → a.interp → a.interp from evalTerm opr ρ) u) v)
+        (evalTerm x ρ) (evalTerm z ρ)
+  | _, .choiceb (a := a) p x0, ρ =>
+      EcTy.choiceb (a := a)
+        (show a.interp → Bool from evalTerm p ρ) (evalTerm x0 ρ)
+  | _, .someT (a := a) x, ρ => EcTy.someVal (a := a) (evalTerm x ρ)
+  | _, .optionGetD (a := a) o d, ρ =>
+      EcTy.optionGetD (a := a) (evalTerm o ρ) (evalTerm d ρ)
+  | _, .listUniq (a := a) l, ρ =>
+      if h : a.hasEq = true then EcTy.listUniq (a := a) (evalTerm l ρ) h
+      else false
+  | _, .listMap (a := a) (b := b) f l, ρ =>
+      EcTy.listMap (a := a) (b := b)
+        (show a.interp → b.interp from evalTerm f ρ) (evalTerm l ρ)
+  | _, .listFilter (a := a) p l, ρ =>
+      EcTy.listFilter (a := a)
+        (show a.interp → Bool from evalTerm p ρ) (evalTerm l ρ)
+  | _, .listAll (a := a) p l, ρ =>
+      EcTy.listAll (a := a)
+        (show a.interp → Bool from evalTerm p ρ) (evalTerm l ρ)
+  | _, .listHas (a := a) p l, ρ =>
+      EcTy.listHas (a := a)
+        (show a.interp → Bool from evalTerm p ρ) (evalTerm l ρ)
+  | _, .listCount (a := a) p l, ρ =>
+      EcTy.listCount (a := a)
+        (show a.interp → Bool from evalTerm p ρ) (evalTerm l ρ)
   | _, .fsetMem (a := a) s x, ρ =>
       if h : a.hasEq = true then
         EcTy.fsetMem (a := a) (evalTerm s ρ) (evalTerm x ρ) h
