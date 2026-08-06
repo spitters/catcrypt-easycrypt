@@ -211,7 +211,7 @@ def otpPrEqForm : EcForm :=
 def otpPrDiffForm : EcForm :=
   .allMem "&m"
     (EcForm.prDiffCmp .eq "Top.OTP0./main" (.lit (t := .unit) ())
-      "Top.OTP1./main" (.lit (t := .unit) ()) (.named "&m") (EcProb.const (EcRealLit.mk 0)))
+      "Top.OTP1./main" (.lit (t := .unit) ()) (.named "&m") (EcProb.const (EcRealLit.mk 0 1)))
 
 -- The decoder produces that form: EasyCrypt writes the difference as
 -- `add a (opp b)` under an absolute value, and that is the only shape with an
@@ -225,7 +225,7 @@ def otpPrDiffForm : EcForm :=
                        (.holds (.res .bool .cur)))
                     (.pr "Top.OTP1./main" ⟨.unit, .bool⟩ (.lit ()) (.named "&m")
                        (.holds (.res .bool .cur))))
-                  (EcProb.const (EcRealLit.mk 0)))) => true
+                  (EcProb.const (EcRealLit.mk 0 1)))) => true
         | _ => false)
 
 /-! ## The resolution environment

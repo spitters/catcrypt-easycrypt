@@ -409,13 +409,13 @@ def pairLlForm : EcForm :=
     (.allMod "B" srcInterface
       (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
         (.imp (.lossless (xqualify "B" "get") ⟨.unit, .bool⟩)
-          (.bdHoare pairPath mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))))
+          (.bdHoare pairPath mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))))
 
 /-- The statement of `pair_key_ll`, as the decoder produces it. -/
 def pairKeyLlForm : EcForm :=
   .allMod "A" advInterface
     (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
-      (.bdHoare pairKeyPath mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))
+      (.bdHoare pairKeyPath mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))
 
 -- The decoder produces those forms: two nested unrestricted module binders,
 -- `islossless` over each abstract module's procedure as the dedicated node, and
@@ -427,7 +427,7 @@ def pairKeyLlForm : EcForm :=
                   (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                     (.imp (.lossless "B./get" ⟨.unit, .bool⟩)
                       (.bdHoare "Top.Pair(A, B)./main" ⟨.unit, .bool⟩ (.lit ())
-                        .tru .tru EcCmp.eq (EcRealLit.mk 1)))))) =>
+                        .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))))) =>
           I.names == ["guess"] && I.sig "guess" == { arg := .bool, res := .bool }
             && J.names == ["get"] && J.sig "get" == { arg := .unit, res := .bool }
         | _ => false)
@@ -436,7 +436,7 @@ def pairKeyLlForm : EcForm :=
         | .ok (.allMod "A" I
                 (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                   (.bdHoare "Top.Pair(A, Top.Key)./main" ⟨.unit, .bool⟩ (.lit ())
-                    .tru .tru EcCmp.eq (EcRealLit.mk 1)))) =>
+                    .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))) =>
           I.names == ["guess"] && I.sig "guess" == { arg := .bool, res := .bool }
         | _ => false)
 

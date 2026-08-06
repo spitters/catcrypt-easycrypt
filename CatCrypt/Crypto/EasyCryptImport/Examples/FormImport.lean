@@ -100,7 +100,7 @@ theorem otpEquivGoal_holds (m₀ m₁ : Bool) : otpEquivGoal m₀ m₁ :=
 def otpPrDiffForm : EcForm :=
   .allMem "m"
     (EcForm.prDiffCmp .eq "OTP0.main" (.lit (t := .unit) ())
-      "OTP1.main" (.lit (t := .unit) ()) (.named "m") (EcProb.const (EcRealLit.mk 0)))
+      "OTP1.main" (.lit (t := .unit) ()) (.named "m") (EcProb.const (EcRealLit.mk 0 1)))
 
 /-- The imported statement, as a goal. -/
 noncomputable def otpPrDiffGoal (m₀ m₁ : Bool) : Prop :=

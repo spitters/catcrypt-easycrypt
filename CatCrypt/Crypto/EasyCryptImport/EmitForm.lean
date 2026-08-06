@@ -261,7 +261,9 @@ which is the injection definitionally, and the equation the pair carries is
 closed by `rfl`. -/
 
 /-- The text a real literal prints as. -/
-def emitRealLit (r : EcRealLit) : String := s!"({r.num} : ℕ)"
+def emitRealLit (r : EcRealLit) : String :=
+  if r.den == 1 then s!"({r.num} : ℕ)"
+  else s!"(({r.num} : ℕ) / ({r.den} : ℕ) : ℝ≥0∞)"
 
 /-! ## Terms -/
 
@@ -836,19 +838,19 @@ private def chkExpCtx : ShallowCtx where
 -- numeral the form carries, at `ℕ`.
 #guard emitShallowForm false
     (.bdHoare "Top.OTP0./main" chkMainSig (.lit (t := .unit) ())
-      .tru .tru EcCmp.eq (EcRealLit.mk 1)) chkExpCtx
+      .tru .tru EcCmp.eq (EcRealLit.mk 1 1)) chkExpCtx
   == .ok "∀ h : Heap, True → prEventComp (lowerClosedGame (otpGame false)) h \
       (fun _ _ => True) = (1 : ℕ)"
 
 -- `EcCmp.ge` puts the bound on the left, as `cmpRel` does.
 #guard emitShallowForm false
     (.bdHoare "Top.OTP0./main" chkMainSig (.lit (t := .unit) ())
-      .tru (.holds (.res .bool .cur)) EcCmp.ge (EcRealLit.mk 0)) chkExpCtx
+      .tru (.holds (.res .bool .cur)) EcCmp.ge (EcRealLit.mk 0 1)) chkExpCtx
   == .ok "∀ h : Heap, True → (0 : ℕ) ≤ prEventComp (lowerClosedGame (otpGame \
       false)) h (fun r _ => r = true)"
 
 -- A real constant prints as its numeral at `ℕ`.
-#guard emitShallowProb (EcProb.const (EcRealLit.mk 0)) chkExpCtx == .ok "(0 : ℕ)"
+#guard emitShallowProb (EcProb.const (EcRealLit.mk 0 1)) chkExpCtx == .ok "(0 : ℕ)"
 
 -- The form of `exp_ll` in `Examples/RestrictedImport.lean`, whose hand-written
 -- equation is the specification this printer reproduces: the restriction against
@@ -859,7 +861,7 @@ private def chkExpCtx : ShallowCtx where
     (.allModRestr "A" chkAdvInterface [chkKGlobal]
       (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
         (.bdHoare "Top.Exp0(A)./main" chkMainSig (.lit (t := .unit) ())
-          .tru .tru EcCmp.eq (EcRealLit.mk 1)))) chkExpCtx
+          .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))) chkExpCtx
   == .ok "∀ A : ModuleImpl advInterface, ModuleRespectsLocs (globLocs \
       [(EcGlobal.mk \"Top.Otp./k\" 0 EcTy.bool)]) A → (ProcLossless (A.proc \
       \"guess\")) → ∀ h : Heap, True → prEventComp (expImpl A false) h \
@@ -870,7 +872,7 @@ private def chkExpCtx : ShallowCtx where
     (.allModRestr "A" chkAdvInterface [chkKGlobal]
       (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
         (.bdHoare "Top.Exp0(A)./main" chkMainSig (.lit (t := .unit) ())
-          .tru .tru EcCmp.eq (EcRealLit.mk 1)))) == false
+          .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))) == false
 
 -- A binder the body reads only inside a longer identifier prints as `_`.
 #guard shallowBinder "r₁ = r₂" "r" == "_"

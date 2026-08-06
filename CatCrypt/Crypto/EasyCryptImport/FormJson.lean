@@ -230,6 +230,8 @@ structure FormPaths where
   realMul : String
   /-- Real negation. -/
   realOpp : String
+  /-- Real reciprocal, which is how a fractional bound is written. -/
+  realInv : String
   /-- Real absolute value. -/
   realAbs : String
   /-- The non-strict order on the reals. -/
@@ -250,6 +252,7 @@ def ecFormPaths : FormPaths where
   realAdd := "Top.CoreReal.add"
   realMul := "Top.CoreReal.mul"
   realOpp := "Top.CoreReal.opp"
+  realInv := "Top.CoreReal.inv"
   realAbs := "Top.Real.`|_|"
   realLe := "Top.CoreReal.le"
   realLt := "Top.CoreReal.lt"
@@ -1932,7 +1935,27 @@ constant, and `from_int` of a non-negative integer is its only shape, so the
 numeral the node applies `from_int` to is the whole of the literal. -/
 def decodeRealLit (F : FormTables) (j : Json) : Except String EcRealLit := do
   let p ← appHeadPath j
-  if p ≠ F.paths.realFromInt then
+  if p = F.paths.realInv then
+    -- `inv` of a numeral is that numeral's reciprocal, the shape a guessing
+    -- game's bound is written in. Its argument is a literal of the same
+    -- fragment, so the reading is the numeral it carries, under a `1`.
+    match _hinv : getArr j "args" with
+    | .error e => .error e
+    | .ok arr =>
+      match arr.toList.attach with
+      | [⟨d, _hd⟩] =>
+        match decodeRealLit F d with
+        | .error e => .error e
+        | .ok r =>
+          if r.den ≠ 1 then
+            fail s!"'{p}' of a bound that is itself a fraction in {j.compress}: \
+              the fragment carries one division"
+          else if r.num = 0 then
+            fail s!"'{p}' of zero in {j.compress}: the reciprocal of zero is not \
+              a bound the fragment carries"
+          else .ok ⟨1, r.num⟩
+      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+  else if p ≠ F.paths.realFromInt then
     fail s!"the real literal '{p}' in {j.compress}: the fragment has the \
       injection of a non-negative integer only"
   else
@@ -1945,11 +1968,14 @@ def decodeRealLit (F : FormTables) (j : Json) : Except String EcRealLit := do
       else
         let v ← getStr n "value"
         match v.toNat? with
-        | some m => .ok ⟨m⟩
+        | some m => .ok ⟨m, 1⟩
         | none =>
           fail s!"the integer literal '{v}' is not a non-negative decimal, and a \
             negative bound has no image in ℝ≥0∞"
     | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+termination_by jsonSize j
+decreasing_by
+  exact getArr_decreases _hinv (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
 
 /-! ## Reading a definition written over type parameters
 
@@ -2676,6 +2702,13 @@ def decodeProb (F : FormTables) (j : Json) : Except String EcProb :=
                   | .error e => .error e
                   | .ok b => .ok (.mul a b)
               | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+            else if p = F.paths.realInv then
+              -- The reciprocal of a numeral is a constant, and that is the shape
+              -- a guessing game's bound is written in. A reciprocal of anything
+              -- else is not a constant and has no `EcProb.const`.
+              match decodeRealLit F j with
+              | .error e => .error e
+              | .ok r => .ok (.const r)
             else
               fail s!"the real operator '{p}' in {j.compress}: EcProb has \
                 Pr[…], a constant, a parameter, a sum, a product and an \
@@ -3137,10 +3170,11 @@ private def formsStatement (name : String) : Except String EcForm := do
         | .error _ => true
         | _ => false)
 
--- `Pr[Ideal.main(true) @ &m : res] = 1%r / 2%r`: the bound is a quotient, and
--- `EcProb` has no division.
+-- `Pr[Ideal.main(true) @ &m : res] = 1%r / 2%r`: the bound is the reciprocal of
+-- a numeral, which `EcRealLit` carries as a denominator, so the statement
+-- decodes.
 #guard (match formsStatement "ideal_uniform" with
-        | .error _ => true
+        | .ok _ => true
         | _ => false)
 
 -- A statement over a user-declared operator, whose path is in no dispatch table.
@@ -3268,13 +3302,13 @@ def hoareStatement (name : String) : Except String EcForm := do
 -- the bound as well as the shape of the statement, since `EcRealLit` carries the
 -- numeral the decoder read.
 #guard (match hoareStatement "toss_lossless" with
-        | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)) => true
+        | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) .tru .tru EcCmp.eq (EcRealLit.mk 1 1)) => true
         | _ => false)
 
 -- `phoare [Coin.toss : Coin.b = false ==> res] <= 1%r` decodes at `EcCmp.le`.
 #guard (match hoareStatement "toss_le" with
         | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) (.eqT a b)
-                 (.holds (.res .bool .cur)) EcCmp.le (EcRealLit.mk 1)) =>
+                 (.holds (.res .bool .cur)) EcCmp.le (EcRealLit.mk 1 1)) =>
           isGlobReadAt a "Top.Coin./b" 0 (.side .cur) && isBoolLit b false
         | _ => false)
 
@@ -3282,7 +3316,7 @@ def hoareStatement (name : String) : Except String EcForm := do
 -- `EcCmp.ge`.
 #guard (match hoareStatement "toss_ge" with
         | .ok (.bdHoare "Top.Coin./toss" ⟨.unit, .bool⟩ (.lit ()) .tru
-                 (.and (.holds (.res .bool .cur)) (.eqT a b)) EcCmp.ge (EcRealLit.mk 0)) =>
+                 (.and (.holds (.res .bool .cur)) (.eqT a b)) EcCmp.ge (EcRealLit.mk 0 1)) =>
           isGlobReadAt a "Top.Coin./b" 0 (.side .cur) && isBoolLit b true
         | _ => false)
 
@@ -3327,7 +3361,7 @@ def intsFormStatement (name : String) : Except String EcForm := do
                 (.probCmp .le
                   (.pr "Top.Counter./main" ⟨.unit, .int⟩ (.lit ()) (.named "&m")
                      (.eqT (.res .int .cur) z))
-                  (EcProb.const (EcRealLit.mk 1)))) => isIntLit z 0
+                  (EcProb.const (EcRealLit.mk 1 1)))) => isIntLit z 0
         | _ => false)
 
 /-- The tables with no procedure and no binder, for the nodes below, which no
@@ -3387,7 +3421,7 @@ private def jRealZero : Json :=
 
 -- A real literal decodes to a constant probability.
 #guard (match decodeProb bareTables jRealZero with
-        | .ok (EcProb.const (EcRealLit.mk 0)) => true
+        | .ok (EcProb.const (EcRealLit.mk 0 1)) => true
         | _ => false)
 
 -- A signed difference of two probabilities is rejected: `ℝ≥0∞` subtraction is
@@ -3403,7 +3437,7 @@ private def jRealZero : Json :=
             (jRealApp "Top.Real.`|_|"
               #[jRealApp "Top.CoreReal.add"
                   #[jRealZero, jRealApp "Top.CoreReal.opp" #[jRealZero]]]) with
-        | .ok (.absDiff (EcProb.const (EcRealLit.mk 0)) (EcProb.const (EcRealLit.mk 0))) => true
+        | .ok (.absDiff (EcProb.const (EcRealLit.mk 0 1)) (EcProb.const (EcRealLit.mk 0 1))) => true
         | _ => false)
 
 -- A quotient is rejected.

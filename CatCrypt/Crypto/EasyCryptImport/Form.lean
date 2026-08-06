@@ -232,10 +232,18 @@ and `EcRealLit.value` a second arm, and the invariant survives that. -/
 structure EcRealLit where
   /-- The numeral the decoder read from the export. -/
   num : Nat
+  /-- The numeral it is divided by, `1` where the export carries no division.
+  A bound written `1%r / 2%r` is the reciprocal of a numeral, which is what a
+  guessing game's advantage is stated against. -/
+  den : Nat := 1
   deriving DecidableEq, Repr
 
-/-- The bound a real literal denotes. -/
-def EcRealLit.value (r : EcRealLit) : ℝ≥0∞ := (r.num : ℝ≥0∞)
+/-- The bound a real literal denotes. The denominator `1` is its own arm rather
+than a division by one, so a literal carrying no denominator reduces to its
+numeral and the statements whose bound is a numeral stay closed by `rfl`. -/
+noncomputable def EcRealLit.value : EcRealLit → ℝ≥0∞
+  | ⟨n, 1⟩ => (n : ℝ≥0∞)
+  | ⟨n, d⟩ => (n : ℝ≥0∞) / (d : ℝ≥0∞)
 
 /-! ## The term layer -/
 

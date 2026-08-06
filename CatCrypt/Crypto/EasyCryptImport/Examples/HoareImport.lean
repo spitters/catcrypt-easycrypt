@@ -260,7 +260,7 @@ bound appears there at `ℕ`, which is the type `EcRealLit.value` injects from.
 
 /-- The statement of `toss_lossless` at the bound its source writes. -/
 def tossLosslessForm : EcForm :=
-  .bdHoare "Top.Coin./toss" coinSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)
+  .bdHoare "Top.Coin./toss" coinSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1 1)
 
 /-- The imported statement of `toss_lossless`, as a goal. -/
 noncomputable def tossLosslessGoal : Prop := importedProp coinEnv tossLosslessForm

@@ -366,7 +366,7 @@ theorem expPrEqGoal_eq :
 def expLosslessForm : EcForm :=
   .allModRestr "A" advInterface [kGlobal]
     (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
-      (.bdHoare "Top.Exp0(A)./main" mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))
+      (.bdHoare "Top.Exp0(A)./main" mainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))
 
 -- The decoder produces that form: `islossless` over the abstract module's
 -- procedure is the dedicated node, and over the functor image it is the bounded
@@ -375,7 +375,7 @@ def expLosslessForm : EcForm :=
         | .ok (.allModRestr "A" _ [_]
                 (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                   (.bdHoare "Top.Exp0(A)./main" ⟨.unit, .bool⟩ (.lit ())
-                    .tru .tru EcCmp.eq (EcRealLit.mk 1)))) => true
+                    .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))) => true
         | _ => false)
 
 /-- The imported statement of `exp_ll`, as a goal. -/

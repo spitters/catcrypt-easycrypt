@@ -425,7 +425,7 @@ def importedStatement (name : String) : Except String EcForm := do
 def expNegLlForm : EcForm :=
   .allModRestr "A" advInterface [kGlobal]
     (.imp (.lossless (xqualify "A" "guess") ⟨.bool, .bool⟩)
-      (.bdHoare expNegPath expMainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1)))
+      (.bdHoare expNegPath expMainSig (.lit (t := .unit) ()) .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))
 
 -- The decoder produces that form: `islossless` over the abstract module's
 -- procedure is the dedicated node, and over the functor image it is the bounded
@@ -434,7 +434,7 @@ def expNegLlForm : EcForm :=
         | .ok (.allModRestr "A" I [g]
                 (.imp (.lossless "A./guess" ⟨.bool, .bool⟩)
                   (.bdHoare "Top.Exp(Top.Neg(A))./main" ⟨.unit, .bool⟩ (.lit ())
-                    .tru .tru EcCmp.eq (EcRealLit.mk 1)))) =>
+                    .tru .tru EcCmp.eq (EcRealLit.mk 1 1)))) =>
           I.names == ["guess"] && I.sig "guess" == { arg := .bool, res := .bool }
             && g.name == "Top.Otp./k" && g.id == 0 && g.ty == .bool
         | _ => false)
