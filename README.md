@@ -19,7 +19,7 @@ proof crosses the boundary.
   M.ec            EasyCrypt source
    │  ec2json     a separate project; links EasyCrypt's own ecLib out of tree
    ▼
-  M.json          schema "catcrypt-ec-export", version 5, compared for equality
+  M.json          schema "catcrypt-ec-export", version 10, compared for equality
    │  Json.lean       programs:   EcTy / EcExpr / EcStmt / EcModule / EcGame
    │  FormJson.lean   statements: EcTerm / EcProb / EcForm
    ▼
@@ -28,6 +28,27 @@ proof crosses the boundary.
    ├── Lower.lean ──────▶ an SPComp program
    └── FormToProp.lean ─▶ a CatCrypt Prop — the imported goal
 ```
+
+## Coverage
+
+Nine of EasyCrypt's shipped `crypto/` developments import with no decode error:
+`Commitment`, `LorR`, `MAC`, `PRG`, `pke/PKE_CPA`, `ske/CPA`, `ske/CCA`,
+`ske/CCA1` and `ske/NewSKE`. Every item of each either closes or is reported
+parameterised over a declaration the envelope leaves abstract, which the caller
+supplies.
+
+`--survey-all` is what measures this — it decode-attempts every item of every
+export in a directory, in one process, and classifies each:
+
+```
+lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
+  --survey-all <dir-of-exports>
+```
+
+Run it rather than reading a count anywhere. Every figure moves with the
+exporter, with the ingestion tables and with the corpus.
+[`docs/FRAGMENT.md`](docs/FRAGMENT.md) states the fragment those verdicts are
+against.
 
 ## Trust
 
@@ -93,7 +114,7 @@ environment binding the procedures the statement names.
 
 The exporter is <https://github.com/spitters/ec-export>, cloned as the sibling
 `../ec-export`; it is not part of this repository, and this package accepts its
-schema version 5 exactly. EasyCrypt: <https://www.easycrypt.info/>.
+schema version 10 exactly. EasyCrypt: <https://www.easycrypt.info/>.
 
 ## License
 

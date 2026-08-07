@@ -352,6 +352,12 @@ noncomputable def evalTerm : {t : EcTy} → EcTerm t → FormEnv → t.interp
   | _, .listMap (a := a) (b := b) f l, ρ =>
       EcTy.listMap (a := a) (b := b)
         (show a.interp → b.interp from evalTerm f ρ) (evalTerm l ρ)
+  | _, .listFoldr (a := a) (b := b) f z l, ρ =>
+      EcTy.listFoldr (a := a) (b := b)
+        (fun u v =>
+          (show b.interp → b.interp from
+            (show a.interp → b.interp → b.interp from evalTerm f ρ) u) v)
+        (evalTerm z ρ) (evalTerm l ρ)
   | _, .listFilter (a := a) p l, ρ =>
       EcTy.listFilter (a := a)
         (show a.interp → Bool from evalTerm p ρ) (evalTerm l ρ)

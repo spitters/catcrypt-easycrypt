@@ -9,7 +9,7 @@ The decode-lower-translate pipeline, the module map, and the repository layout.
     │
     │  ec2json          links EasyCrypt's own ecLib out of tree; no patch to
     ▼                   the EasyCrypt sources; exports after typechecking
-  M.json                schema "catcrypt-ec-export", version 5 (pinned exactly)
+  M.json                schema "catcrypt-ec-export", version 10 (pinned exactly)
     │
     │  Json.lean        programs:   EcTy / EcExpr / EcStmt / EcModule / EcGame
     │  FormJson.lean    statements: EcTerm / EcProb / EcForm

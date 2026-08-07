@@ -357,6 +357,10 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
   | _, .listMap f l, C => do
     let g ← emitShallowTerm f C; let s ← emitShallowTerm l C
     .ok s!"(EcTy.listMap {g} {s})"
+  | _, .listFoldr f z l, C => do
+    let g ← emitShallowTerm f C; let b ← emitShallowTerm z C
+    let s ← emitShallowTerm l C
+    .ok s!"(EcTy.listFoldr (fun u v => {g} u v) {b} {s})"
   | _, .listFilter p l, C => do
     let q ← emitShallowTerm p C; let s ← emitShallowTerm l C
     .ok s!"(EcTy.listFilter {q} {s})"

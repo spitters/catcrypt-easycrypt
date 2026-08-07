@@ -1519,6 +1519,28 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                           fail s!"'{p}' is applied to a value of type {repr u}, \
                             which is not a list"
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    -- `foldr f z s` returns the type `z` has, and the element
+                    -- code comes off the list argument, since the result does
+                    -- not mention it.
+                    | .listFoldr, u =>
+                      match arr.toList.attach with
+                      | [⟨fJ, _⟩, ⟨zJ, _⟩, ⟨lJ, _⟩] =>
+                        match decodeTyField F.tables lJ "ty" with
+                        | .error e => .error e
+                        | .ok (.list a) =>
+                          match decodeTerm F (.arrow a (.arrow u u)) fJ with
+                          | .error e => .error e
+                          | .ok fe =>
+                            match decodeTerm F u zJ with
+                            | .error e => .error e
+                            | .ok ze =>
+                              match decodeTerm F (.list a) lJ with
+                              | .error e => .error e
+                              | .ok le => .ok (.listFoldr fe ze le)
+                        | .ok w =>
+                          fail s!"'{p}' folds a value of type {repr w}, which is \
+                            not a list"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 3"
                     | .listFilter, .list a =>
                       match arr.toList.attach with
                       | [⟨pJ, _⟩, ⟨lJ, _⟩] =>

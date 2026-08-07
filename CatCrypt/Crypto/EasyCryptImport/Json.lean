@@ -55,7 +55,7 @@ surfaces as an unknown `"kind"` rather than as a silent misparse.
 | `Eapp` of integer `+` / `≤` | `EcExpr.intAdd` / `.intLe` |
 | `Eapp` of integer `<` | `EcExpr.bnot` of the reversed `.intLe` |
 | `Eapp` of `_.[_<-_]` / `dom` | `EcExpr.mapSet` / `.mapMem` |
-| `Eapp` of `oget` / `odflt` to `_.[_]` | `EcExpr.mapGetD`, at the value type's canonical inhabitant / at the given default |
+| `Eapp` of `oget` / `odflt` | `EcExpr.optionGetD` at any option, or `EcExpr.mapGetD` where the option is a lookup `_.[_]`; the default is the value type's canonical inhabitant / the given one |
 | `Etuple [a, b]`, `Eproj` at index 0 / 1 | `EcExpr.pair`, `EcExpr.fst` / `.snd` |
 | `Sasgn` to `PVloc` | `EcStmt.assign` |
 | `Sasgn` to an `LvTuple` of locals | `EcStmt.assignTuple` |
@@ -114,12 +114,10 @@ writes, is the shape with no such choice in it.
   count, which the guard, the body and the statement before the loop have to
   determine together. The idiom, and what each near-miss reports, is stated at
   `DecodedItem` below.
-* The finite-map lookup `m.[k]` on its own: its image would be an option-valued
-  lookup node, which the AST does not have, so it decodes only under `oget` or
-  `odflt`.
-* A module whose body is an `ME_Alias` — one defined as an application of another
-  module — rejected by body kind: the alias names the applied module by path and
-  no body sits behind it.
+* A top-level module whose body is an `ME_Alias` — one defined as an application
+  of another module — rejected by body kind: the alias names the applied module
+  by path and no body sits behind it. A nested alias is resolved instead, against
+  the target's structure body in the same envelope.
 * An identifier exported as a name with a uniqueness stamp: dropping the stamp
   makes two distinct binders of the same source name alias, so the object form
   of an identifier is rejected rather than truncated, and a stamped identifier
@@ -369,6 +367,8 @@ inductive EcOpKind where
   | listMap
   /-- The elements a predicate holds of, EasyCrypt's `filter`. -/
   | listFilter
+  /-- The right fold of a list, EasyCrypt's `foldr`. -/
+  | listFoldr
   /-- Whether a predicate holds of every element, EasyCrypt's `all`. -/
   | listAll
   /-- Whether a predicate holds of some element, EasyCrypt's `has`. -/
@@ -609,6 +609,8 @@ def ecPrelude : DecodeTables where
      ("Top.List.uniq", .listUniq),
      ("Top.List.map", .listMap),
      ("Top.List.filter", .listFilter),
+     ("Top.List.foldr", .listFoldr),
+     ("Top.foldr", .listFoldr),
      ("Top.List.all", .listAll),
      ("Top.List.has", .listHas),
      ("Top.List.count", .listCount),

@@ -653,6 +653,12 @@ def EcTy.listMap {a b : EcTy} (f : a.interp → b.interp)
     (l : (EcTy.list a).interp) : (EcTy.list b).interp :=
   show List b.interp from (show List a.interp from l).map f
 
+/-- The right fold of a list, EasyCrypt's `foldr f z s`: `f` applied to each
+element and the fold of the rest, from `z` at the empty list. -/
+def EcTy.listFoldr {a b : EcTy} (f : a.interp → b.interp → b.interp)
+    (z : b.interp) (l : (EcTy.list a).interp) : b.interp :=
+  (show List a.interp from l).foldr f z
+
 /-- The elements a predicate holds of, in order, EasyCrypt's `filter`. -/
 def EcTy.listFilter {a : EcTy} (p : a.interp → Bool)
     (l : (EcTy.list a).interp) : (EcTy.list a).interp :=

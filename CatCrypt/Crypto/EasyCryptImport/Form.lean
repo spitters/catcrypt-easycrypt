@@ -213,22 +213,24 @@ inductive EcCmp where
 
 /-! ## Real literals -/
 
-/-- A real literal of the fragment: the natural number the decoder read, and the
-bound it denotes. EasyCrypt writes such a bound as `from_int n`, so the numeral is
-the whole of what the export carries and `EcRealLit.value` is its reading.
+/-- A real literal of the fragment: a numeral, a numeral it is divided by, and
+the bound the pair denotes. EasyCrypt writes such a bound as `from_int n` or as
+the reciprocal of one, so the two numerals are the whole of what the export
+carries and `EcRealLit.value` is their reading.
 
-The value is a function of the numeral rather than a second field beside it, so
-the numeral is the denotation of the value by construction: `EcRealLit.value ⟨n⟩`
-is `(n : ℝ≥0∞)` by `rfl`, the semantics still goes through `ℝ≥0∞` since nothing
-matches on `num`, and a printer reading `num` reads a presentation of the same
-bound. A pair of fields with a proof obligation joining them is the weaker form,
-because the obligation can be omitted at a construction site.
+The value is a function of the fields rather than a third field beside them, so
+the numerals are the denotation of the value by construction: `EcRealLit.value
+⟨n, 1⟩` is `(n : ℝ≥0∞)` by `rfl`, the semantics still goes through `ℝ≥0∞` since
+nothing matches on `num`, and a printer reading the fields reads a presentation
+of the same bound. A pair of fields with a proof obligation joining them to a
+value is the weaker form, because the obligation can be omitted at a construction
+site.
 
-The cost is that a bound which is not a natural number has no `EcRealLit`, by
-hand or otherwise. Nothing decodable is lost: `decodeRealLit` accepts the
-injection of a non-negative integer literal and rejects every other real
-operator. A fragment admitting `q / 2 ^ n` gives `EcRealLit` a second constructor
-and `EcRealLit.value` a second arm, and the invariant survives that. -/
+The cost is that a bound which is not a rational numeral has no `EcRealLit`, by
+hand or otherwise. `decodeRealLit` accepts a non-negative integer literal and the
+reciprocal of one, and rejects every other real operator: a bound such as
+`q / 2 ^ n` has a variable exponent, so it needs a real former carrying a term
+rather than a further numeral field here. -/
 structure EcRealLit where
   /-- The numeral the decoder read from the export. -/
   num : Nat
@@ -345,6 +347,9 @@ inductive EcTerm : EcTy → Type where
   /-- The elements a predicate holds of, in order, EasyCrypt's `filter`. -/
   | listFilter {a : EcTy} (p : EcTerm (.arrow a .bool)) (l : EcTerm (.list a)) :
       EcTerm (.list a)
+  /-- The right fold of a list, EasyCrypt's `foldr`. -/
+  | listFoldr {a b : EcTy} (f : EcTerm (.arrow a (.arrow b b))) (z : EcTerm b)
+      (l : EcTerm (.list a)) : EcTerm b
   /-- Whether a predicate holds of every element, EasyCrypt's `all`. -/
   | listAll {a : EcTy} (p : EcTerm (.arrow a .bool)) (l : EcTerm (.list a)) :
       EcTerm .bool
@@ -463,6 +468,8 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
   | _, .listUniq l => EcTerm.opsOf l
   | _, .listMap f l => EcTerm.opsOf f ++ EcTerm.opsOf l
   | _, .listFilter p l => EcTerm.opsOf p ++ EcTerm.opsOf l
+  | _, .listFoldr f z l =>
+      EcTerm.opsOf f ++ EcTerm.opsOf z ++ EcTerm.opsOf l
   | _, .listAll p l => EcTerm.opsOf p ++ EcTerm.opsOf l
   | _, .listHas p l => EcTerm.opsOf p ++ EcTerm.opsOf l
   | _, .listCount p l => EcTerm.opsOf p ++ EcTerm.opsOf l
