@@ -107,7 +107,7 @@ def roModule : EcModule where
 
 /-- The lowered module. -/
 noncomputable def roImpl : ModuleImpl roInterface :=
-  lowerModule ProcEnv.empty 0 roModule
+  lowerModule ProcEnv.empty OpEnv.empty 0 roModule
 
 /-- The lowered oracle. -/
 noncomputable def query (x : Int) : SPComp Bool := roImpl.proc "query" x
@@ -135,7 +135,7 @@ theorem query_apply (x : Int) (h : Heap) :
             (EcTy.mapSet (a := .int) (b := .bool) (h.gget logGlobal.loc) x r))) := by
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0 roQueryProc.body
-        (emptyEnv.update "x" ⟨EcTy.int, x⟩))
+        ((emptyEnv OpEnv.empty).update "x" ⟨EcTy.int, x⟩))
       (fun env => SPComp.pure (evalExpr roQueryProc.ret env)) h = _
   by_cases hm : EcTy.mapMem (a := .int) (b := .bool) (h.gget logGlobal.loc) x = true
   · rw [if_pos hm]

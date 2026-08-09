@@ -26,7 +26,7 @@ module. `EcFunctor` — a functor of one parameter — is the special case, and
 function taking one `ModuleImpl` per parameter, at the interface that parameter
 declares. `lowerFunctorNX` lands in
 `EcParamsFn F.params (ModuleImpl F.body.interface)`,
-so an application is Lean application — `lowerFunctorNX ρ fuel F X Y` — and a
+so an application is Lean application — `lowerFunctorNX ρ ω fuel F X Y` — and a
 partial application is a Lean function awaiting the remaining modules. Each
 parameter is bound with `ProcEnv.bindModuleX` under its own name as the body
 reaches it, which is what a decoded body's cross-paths resolve against, and the
@@ -111,30 +111,30 @@ def EcFunctor.toN (F : EcFunctor) : EcFunctorN where
 /-- Lower the module `M` under a parameter list: bind each parameter with
 `ProcEnv.bindModuleX` under its own name as its module arrives, and lower `M`
 against the environment once no parameter is left. -/
-noncomputable def lowerParamsX (fuel : Nat) (M : EcModule) :
+noncomputable def lowerParamsX (ω : OpEnv) (fuel : Nat) (M : EcModule) :
     (ps : EcParams) → ProcEnv → EcParamsFn ps (ModuleImpl M.interface)
-  | [], ρ => lowerModule ρ fuel M
-  | (x, I) :: ps, ρ => fun X : ModuleImpl I => lowerParamsX fuel M ps (ρ.bindModuleX x X)
+  | [], ρ => lowerModule ρ ω fuel M
+  | (x, I) :: ps, ρ => fun X : ModuleImpl I => lowerParamsX ω fuel M ps (ρ.bindModuleX x X)
 
-theorem lowerParamsX_nil (fuel : Nat) (M : EcModule) (ρ : ProcEnv) :
-    lowerParamsX fuel M [] ρ = lowerModule ρ fuel M := rfl
+theorem lowerParamsX_nil (ω : OpEnv) (fuel : Nat) (M : EcModule) (ρ : ProcEnv) :
+    lowerParamsX ω fuel M [] ρ = lowerModule ρ ω fuel M := rfl
 
-theorem lowerParamsX_cons (fuel : Nat) (M : EcModule) (x : String)
+theorem lowerParamsX_cons (ω : OpEnv) (fuel : Nat) (M : EcModule) (x : String)
     (I : EcInterface) (ps : EcParams) (ρ : ProcEnv) (X : ModuleImpl I) :
-    lowerParamsX fuel M ((x, I) :: ps) ρ X
-      = lowerParamsX fuel M ps (ρ.bindModuleX x X) := rfl
+    lowerParamsX ω fuel M ((x, I) :: ps) ρ X
+      = lowerParamsX ω fuel M ps (ρ.bindModuleX x X) := rfl
 
 /-- Lower a functor of several parameters to a curried Lean function on module
 records. Functor application is function application, and a partial application
 is the function awaiting the remaining modules. -/
-noncomputable def lowerFunctorNX (ρ : ProcEnv) (fuel : Nat) (F : EcFunctorN) :
+noncomputable def lowerFunctorNX (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (F : EcFunctorN) :
     EcParamsFn F.params (ModuleImpl F.body.interface) :=
-  lowerParamsX fuel F.body F.params ρ
+  lowerParamsX ω fuel F.body F.params ρ
 
 /-- A functor of one parameter lowers to the same function through either
 route. -/
-theorem lowerFunctorNX_toN (ρ : ProcEnv) (fuel : Nat) (F : EcFunctor) :
-    lowerFunctorNX ρ fuel F.toN = lowerFunctorX ρ fuel F := rfl
+theorem lowerFunctorNX_toN (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (F : EcFunctor) :
+    lowerFunctorNX ρ ω fuel F.toN = lowerFunctorX ρ ω fuel F := rfl
 
 /-! ## Decoding -/
 

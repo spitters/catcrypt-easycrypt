@@ -98,7 +98,7 @@ def qfoldGame (m : Bool) (q : Nat) : EcGame where
   ret := EcExpr.var .bool "acc"
 
 /-- The initial valuation for the loop: every variable unassigned, `acc` set to `b`. -/
-def accEnv (b : Bool) : Env := emptyEnv.update "acc" ⟨.bool, b⟩
+def accEnv (b : Bool) : Env := (emptyEnv OpEnv.empty).update "acc" ⟨.bool, b⟩
 
 /-- One lowered round: sample `k`, rebind `k` and then `acc := acc ^ k ^ m`. This
 is the semantic content of a single `call step`. -/
@@ -122,7 +122,7 @@ theorem loopStep_eq (m : Bool) (e : Env) :
 followed by reading out the accumulator bit. This identifies the importer's
 output with a hand-written fold, so the relational loop rule applies. -/
 theorem lowerGame_qfold (m : Bool) (q : Nat) :
-    lowerClosedGame (qfoldGame m q) 1
+    lowerClosedGame OpEnv.empty (qfoldGame m q) 1
       = SPComp.bind (SPComp.foldM (accEnv false) (List.replicate q (stepFn m)))
           (fun e => SPComp.pure (e.read .bool "acc")) := by
   have hfn : (fun e => lowerStmts ProcEnv.empty (qfoldProcs m) 1 [EcStmt.call "step"] e)
@@ -143,7 +143,7 @@ round's fresh uniform key masks the message, so the XOR bijection
 `boolXorBij (m₀ ^ m₁)` couples the two runs round by round; `rHoare_foldM` lifts
 the per-round coupling over the whole loop. -/
 theorem qfold_coupling (m₀ m₁ : Bool) (q : Nat) :
-    pRHL eqPre (lowerClosedGame (qfoldGame m₀ q) 1) (lowerClosedGame (qfoldGame m₁ q) 1)
+    pRHL eqPre (lowerClosedGame OpEnv.empty (qfoldGame m₀ q) 1) (lowerClosedGame OpEnv.empty (qfoldGame m₁ q) 1)
       eqPost := by
   rw [lowerGame_qfold, lowerGame_qfold]
   apply rHoare_bind (Ψ := fun e₁ h₁ e₂ h₂ =>
@@ -178,7 +178,7 @@ theorem qfold_coupling (m₀ m₁ : Bool) (q : Nat) :
 distinguisher `A` has advantage exactly `0`, obtained from the pRHL equality
 `qfold_coupling` via `advantage_zero_of_rHoare`. -/
 theorem qfold_advantage_zero (m₀ m₁ : Bool) (q : Nat) (A : Bool → SPComp Bool) :
-    AdvantageA (lowerClosedGame (qfoldGame m₀ q) 1) (lowerClosedGame (qfoldGame m₁ q) 1) A
+    AdvantageA (lowerClosedGame OpEnv.empty (qfoldGame m₀ q) 1) (lowerClosedGame OpEnv.empty (qfoldGame m₁ q) 1) A
       = 0 :=
   advantage_zero_of_rHoare _ _ (qfold_coupling m₀ m₁ q) A
 

@@ -128,8 +128,8 @@ private def otpEquivStatementOptions : StatementOptions where
   imports := ["CatCrypt.Crypto.EasyCryptImport.Examples.OTPEquivImport"]
   opens := ["CatCrypt.Crypto.EasyCryptBridge"]
   procNames :=
-    [("Top.OTP0./main", "lowerClosedGame (OTPImport.otpGame false)"),
-     ("Top.OTP1./main", "lowerClosedGame (OTPImport.otpGame true)")]
+    [("Top.OTP0./main", "lowerClosedGame OpEnv.empty (OTPImport.otpGame false)"),
+     ("Top.OTP1./main", "lowerClosedGame OpEnv.empty (OTPImport.otpGame true)")]
 
 -- `Examples/OTPEquivGenerated.lean` is what the emitter prints for `otp_equiv`.
 #guard (match emitStatementFromJson ecPrelude "otp_equiv" "otpEquivStatement"
@@ -176,15 +176,15 @@ theorem otp0Game_eq_otpGame :
 one `SPComp Bool`. `lowerGame` reads a game's procedures, body and result
 expression, and the two games differ only in the source name they carry. -/
 theorem lowerClosedGame_otp0Game :
-    lowerClosedGame Generated.otp0Game = lowerClosedGame (OTPImport.otpGame false) :=
+    lowerClosedGame OpEnv.empty Generated.otp0Game = lowerClosedGame OpEnv.empty (OTPImport.otpGame false) :=
   rfl
 
 /-- Zero distinguishing advantage between the generated game and the hand-written
 game at the other message bit, from `OTPImport.otpImport_advantage_zero` along
 `lowerClosedGame_otp0Game`. -/
 theorem generated_otp0_advantage_zero (A : Bool → SPComp Bool) :
-    AdvantageA (lowerClosedGame Generated.otp0Game)
-      (lowerClosedGame (OTPImport.otpGame true)) A = 0 := by
+    AdvantageA (lowerClosedGame OpEnv.empty Generated.otp0Game)
+      (lowerClosedGame OpEnv.empty (OTPImport.otpGame true)) A = 0 := by
   rw [lowerClosedGame_otp0Game]
   exact OTPImport.otpImport_advantage_zero false true A
 

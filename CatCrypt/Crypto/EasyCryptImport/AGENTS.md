@@ -433,14 +433,16 @@ because it names a distribution no EasyCrypt game samples from.
   is exercised only from hand-written literals. `EcForm.memEqOn`, the footprint
   comparison against declared globals, is in the same position: `Fglob` names a
   binder, so the reachable comparison is `EcForm.memEqOnMod`.
-- **A module defined as an application of a functor does not decode.** `module G
-  = F(M)` and `module G (X : I) = F(X, M)` both export with the body kind
-  `ME_Alias`, and the alias carries the applied path as a string with no body
-  behind it, so `decodeStructureBody` rejects the node by its body kind. Decoding
-  one means resolving the target path against the export's own items, which is a
-  name-resolution pass the decoder does not have. The image a *statement* names is
-  a separate matter and is already supplied by the caller through
-  `FormEnv.functorImages`.
+- **A *top-level* module defined as an application of a functor does not decode.**
+  `module G = F(M)` and `module G (X : I) = F(X, M)` both export with the body
+  kind `ME_Alias` carrying the applied path as a string and no body behind it, so
+  `decodeStructureBody` rejects the node by its body kind. The image a *statement*
+  names is supplied by the caller through `FormEnv.functorImages`. A *nested*
+  alias does resolve, against the target's structure body in the same envelope;
+  when its head is the enclosing functor's own parameter it reads as a forwarding
+  module, whose procedures are `FBalias` at the target's cross-paths. In the
+  globals-only pass a resolved alias is stripped of its procedures before it is
+  read — `aliasedBody` returns the target's body as the exporter wrote it.
 - **`Emit.lean` has no `EcFunctorN` arm.** `emitFunctor` prints an `EcFunctor`, so
   a committed literal exists for a functor of one parameter only; a functor of
   several parameters is reached through the decoder and through a hand-written
@@ -460,6 +462,18 @@ because it names a distribution no EasyCrypt game samples from.
   query counter or running time, so an imported concrete-security statement that
   depends on `q_H` or on a running time loses that dependence. This is a gap in
   what can be stated, not a hypothesis that could be supplied.
+- **The term layer is `ℝ≥0∞`, and EasyCrypt's reals are signed.** This is the
+  single largest remaining class in the shipped corpus: `Top.CoreReal.from_int`
+  applied to anything but an integer literal has no faithful image, because
+  accepting a general integer term means truncating a possibly-negative value.
+  Moving the term layer to `ℝ` clears the class across `Birthday`,
+  `GlobalHybrid`, `PKSMK` and `AdvAbsVal`. Signed subtraction of probabilities is
+  the same boundary.
+- **The export drops a module binder's stamp.** `jxpath` renders a cross-path
+  through `EcPath.x_tostring`, which prints the name alone, so a functor binding
+  two parameters of one source name reaches the decoder with calls it cannot
+  attribute. Fixing it is a schema change in the exporter's `bin/ec2json.ml`
+  touching every cross-path string; it is what `DigitalSignaturesROM` waits on.
 
 ## Cross-references
 

@@ -49,12 +49,13 @@ surfaces as an unknown `"kind"` rather than as a silent misparse.
 | `Eop p`, `p` in `emptyListPaths` / `nonePaths`, at a `list` / `option` code | `EcExpr.lit []` / `EcExpr.lit none` |
 | `Eop p`, `p` in `witnessPaths`, at any code | `EcExpr.lit default`, the canonical inhabitant — the reading `oget` already takes |
 | `Eapp` of `fset1` / `` `|` `` / `mem` | `EcExpr.fsetSingle` / `.fsetUnion` / `.fsetMem` |
-| `Eapp` of `Some` / `::` / `rcons` / `size` / `mem` / `nth` | `EcExpr.someE` / `.listCons` / `.listRcons` / `.listSize` / `.listMem` / `.listNth` |
+| `Eapp` of `Some` / `::` / `rcons` / `size` / `mem` / `nth` / `head` | `EcExpr.someE` / `.listCons` / `.listRcons` / `.listSize` / `.listMem` / `.listNth` / `.listHead` |
+| `Eapp` of the array read `_.[_]` | `EcExpr.listNth` at the element code's canonical inhabitant, the `nth witness` reading `Array.ec` gives it |
 | `Eapp` of `bnot`/`band`/`bxor`/`beq`/`finAdd` | the matching `EcExpr` node |
 | `Eapp` of `bor`/`bimp` | the de Morgan image over `bnot`/`band` |
 | `Eapp` of integer `+` / `≤` | `EcExpr.intAdd` / `.intLe` |
 | `Eapp` of integer `<` | `EcExpr.bnot` of the reversed `.intLe` |
-| `Eapp` of `_.[_<-_]` / `dom` | `EcExpr.mapSet` / `.mapMem` |
+| `Eapp` of `_.[_<-_]` / `dom` / `fdom` / `rng` | `EcExpr.mapSet` / `.mapMem` / `.mapFdom` / `.mapRng` |
 | `Eapp` of `oget` / `odflt` | `EcExpr.optionGetD` at any option, or `EcExpr.mapGetD` where the option is a lookup `_.[_]`; the default is the value type's canonical inhabitant / the given one |
 | `Etuple [a, b]`, `Eproj` at index 0 / 1 | `EcExpr.pair`, `EcExpr.fst` / `.snd` |
 | `Sasgn` to `PVloc` | `EcStmt.assign` |
@@ -65,6 +66,7 @@ surfaces as an unknown `"kind"` rather than as a silent misparse.
 | `Srnd` from a declared-uniform nullary operator | `EcStmt.sample` |
 | `Srnd` from `dunit` / `dmap` / `dcond` / `(\)` / `dlet` / `` `*` `` / `dscale` / `drestrict` | `EcStmt.sampleD` at the matching `EcDistr` |
 | `Equant` of one `ELambda` binder, as a distribution operator's function argument | the binder and body of `EcDistr.map` / `.cond` / `.letD` / `.restrict` |
+| an operator at a function type, applied to fewer arguments than it takes, in the same position | the same, through the eta-expansion `fun x => f … x` (`etaFunArg`) |
 | `Sif` | `EcStmt.ite` |
 | `Swhile` of the bounded idiom, after its initialisation | `EcStmt.forN` |
 | `Scall` without an lvalue, to the enclosing module | `EcStmt.call` |
@@ -135,16 +137,16 @@ writes, is the shape with no such choice in it.
   alias's own. The four scopes and what each does are stated at
   `decodeAliasBody`.
 * The distribution operators outside `distrOpPaths` — `dnull`, `dbiased`,
-  `dbin`, `duniform` over a list, `dlist`, `dfun`, `dopt`, `dfold`, `dinter` —
-  each rejected by path.
-* `Eif`, `Elet`, `Ematch`, `Smatch`, `Sraise`, `Sabstract`,
-  `FBabs`, nested modules, module parameters, and tuple expressions
-  of arity above two (the tuple *type* decodes as a right-nested product, but
-  `Etuple` and `Eproj` stay binary): each is rejected with a message naming
-  the construct. `Equant` is rejected in expression position, and decodes only
-  as a distribution operator's one-binder function argument. An `LvTuple`
-  decodes under an assignment and under a call; under a random sample, and
-  with a global component, it is rejected.
+  `dbin`, `duniform` over a list, `dfun`, `dopt`, `dfold`, `dinter` — each
+  rejected by path.
+* `Elet`, `Ematch`, `Smatch`, `Sraise`, `Sabstract`, `FBabs`, nested modules and
+  module parameters: each is rejected with a message naming the construct.
+  `Equant` is rejected in expression position, and decodes only as a
+  distribution operator's one-binder function argument. `Etuple` decodes at two,
+  three and four components against the code's own right-nested spine, and above
+  that is rejected at the arity; `Eproj` stays binary. An `LvTuple` decodes under
+  an assignment and under a call, its global components stored from the locals
+  they bind; under a random sample it is rejected.
 * A `Datatype` declaration with a constructor that takes an argument, or with no
   constructor at all: the first is a sum, which `EcTy` has no code for, and the
   second denotes the empty type, which no code interprets.
@@ -324,10 +326,17 @@ inductive EcOpKind where
   | intLe
   /-- The strict integer order, decoded through `¬ (b ≤ a)`. -/
   | intLt
+  /-- The integer minimum, `Int.ec`'s `min a b = if a < b then a else b`,
+  decoded through the conditional and the order the AST already has. -/
+  | intMin
+  /-- The integer maximum, `Int.ec`'s `max a b = if a < b then b else a`. -/
+  | intMax
   /-- Binding a key in a finite map. -/
   | mapSet
   /-- Membership of a key in a finite map, EasyCrypt's `dom`. -/
   | mapMem
+  /-- The map with every binding of a key removed, EasyCrypt's `rem`. -/
+  | mapRem
   /-- The lookup `m.[k]`, whose result is an option and which decodes only under
   `oget` or `odflt`. -/
   | mapLookup
@@ -341,6 +350,10 @@ inductive EcOpKind where
   | fsetUnion
   /-- Membership in a finite set, EasyCrypt's `mem`. -/
   | fsetMem
+  /-- The number of elements of a finite set, EasyCrypt's `card`. -/
+  | fsetCard
+  /-- Finite-set inclusion, EasyCrypt's `\\subset`. -/
+  | fsetSubset
   /-- The present option value, EasyCrypt's `Some`. -/
   | someE
   /-- List cons, EasyCrypt's `::`. -/
@@ -353,6 +366,16 @@ inductive EcOpKind where
   | listMem
   /-- The `i`-th element of a list or a default, EasyCrypt's `nth`. -/
   | listNth
+  /-- The list with a position replaced, EasyCrypt's array update. -/
+  | listSet
+  /-- The first `n` elements of a list, EasyCrypt's `take`. -/
+  | listTake
+  /-- The elements of a finite set as a list, EasyCrypt's `elems`. -/
+  | fsetElems
+  /-- The concatenation of two lists, EasyCrypt's `++`. -/
+  | listCat
+  /-- Two lists paired position by position, EasyCrypt's `zip`. -/
+  | listZip
   /-- EasyCrypt's `choiceb`, classical choice with a default. -/
   | choiceb
   /-- EasyCrypt's `pred1`, the predicate that holds of one element. -/
@@ -363,6 +386,8 @@ inductive EcOpKind where
   | iterop
   /-- Whether a list repeats no element, EasyCrypt's `uniq`. -/
   | listUniq
+  /-- The concatenation of a list of lists, EasyCrypt's `flatten`. -/
+  | listFlatten
   /-- The image of a list under a function, EasyCrypt's `map`. -/
   | listMap
   /-- The elements a predicate holds of, EasyCrypt's `filter`. -/
@@ -375,6 +400,15 @@ inductive EcOpKind where
   | listHas
   /-- How many elements a predicate holds of, EasyCrypt's `count`. -/
   | listCount
+  /-- The first element of a list or a default, EasyCrypt's `head`. -/
+  | listHead
+  /-- The array read `arr.[i]`, which `Array.ec` defines as `nth witness`. -/
+  | arrayGet
+  /-- The finite set of the keys a finite map binds, EasyCrypt's `fdom`. -/
+  | mapFdom
+  /-- Whether a value is the binding of some key of a finite map, EasyCrypt's
+  `rng`. -/
+  | mapRng
   deriving DecidableEq, Repr
 
 /-- The distribution operators of the accepted fragment, as dispatch-table
@@ -392,6 +426,8 @@ inductive EcDistrOpKind where
   | dlet
   /-- The independent product, EasyCrypt's ``(`*`)``. -/
   | dprod
+  /-- A list of independent samples, EasyCrypt's `dlist`. -/
+  | dlistOp
   /-- Rescaling to mass one, EasyCrypt's `dscale`. -/
   | dscale
   /-- Restriction to a predicate, EasyCrypt's `drestrict`. -/
@@ -461,9 +497,23 @@ structure DecodeTables where
   /-- Binary type constructors that denote the finite map at their two type
   arguments. -/
   mapTyPaths : List String
-  /-- Unary type constructors that denote the option at their type argument. -/
+  /-- Unary type constructors that denote the option at their type argument. A
+  theory roots its own top-level declarations at `Top`, so `Logic.ec` writes
+  `Top.option` where a client writes `Top.Logic.option`; both spellings name one
+  constructor. The bare one has to be readable everywhere and not only inside its
+  own envelope, since a definition of that theory is stored as the JSON its
+  envelope wrote and expands at the client. -/
   optionTyPaths : List String
-  /-- Unary type constructors that denote the list at their type argument. -/
+  /-- Unary type constructors that denote the list at their type argument. Both
+  the theory's own root spelling and the client's qualified one, for the reason
+  given at `optionTyPaths`.
+
+  `Array.ec`'s `'a array` is among them. It is declared abstract and paired with
+  `mkarray : 'a list -> 'a array` and `ofarray : 'a array -> 'a list`, which the
+  theory's own axioms `mkarrayK` and `ofarrayK` state cancel each other in both
+  directions, and every array operation there is defined as the list operation
+  through `ofarray`. The list code is the image of the source's own bijection,
+  not a weakening of a separate type. -/
   listTyPaths : List String
   /-- Unary type constructors that denote the finite set at their type
   argument. -/
@@ -490,10 +540,11 @@ structure DecodeTables where
   distrPaths : List String
   /-- Distribution operators of the accepted fragment. -/
   distrOpPaths : List (String × EcDistrOpKind)
-  /-- Type constructors of distributions, `'a distr`. A type node names either
-  EasyCrypt's declaration of the type, `Top.Pervasive.distr`, or the alias
-  `Distr.ec` defines for it, `Top.Distr.distr`; the two denote one constructor,
-  so both spellings decode at the same code. -/
+  /-- Type constructors of distributions, `'a distr`. A type node names
+  EasyCrypt's declaration of the type, `Top.Pervasive.distr`, the alias
+  `Distr.ec` defines for it, `Top.Distr.distr`, or the bare `Top.distr` those
+  two envelopes write for their own root; the three denote one constructor, so
+  every spelling decodes at the same code. -/
   distrTyPaths : List String
   /-- Abstract operator declarations, keyed by the operator's path, at the
   signature its declaration gives it. An operator registered here is a parameter
@@ -563,8 +614,8 @@ def ecPrelude : DecodeTables where
     [("Top.Pervasive.bool", .bool), ("Top.Pervasive.unit", .unit),
      ("Top.Pervasive.int", .int)]
   mapTyPaths := ["Top.FMap.fmap"]
-  optionTyPaths := ["Top.Logic.option"]
-  listTyPaths := ["Top.List.list"]
+  optionTyPaths := ["Top.Logic.option", "Top.option"]
+  listTyPaths := ["Top.List.list", "Top.list", "Top.Array.array", "Top.array"]
   fsetTyPaths := ["Top.FSet.fset"]
   constPaths :=
     [("Top.Pervasive.true", ⟨.bool, true⟩),
@@ -573,7 +624,12 @@ def ecPrelude : DecodeTables where
   emptyMapPaths := ["Top.FMap.empty"]
   emptyFsetPaths := ["Top.FSet.fset0"]
   emptyListPaths := ["Top.List.[]"]
-  nonePaths := ["Top.Logic.None"]
+  -- `Logic.ec` declares `option` and its two constructors, and roots its own
+  -- declarations at `Top`, so its own export writes `Top.None` and `Top.Some`
+  -- where a client that reads the theory writes `Top.Logic.None` and
+  -- `Top.Logic.Some`. Both spellings name the same constructor, as the two
+  -- spellings of the type in `optionTyPaths` name the same type.
+  nonePaths := ["Top.Logic.None", "Top.None"]
   witnessPaths := ["Top.Pervasive.witness"]
   opPaths :=
     [("Top.Pervasive.[!]", .bnot),
@@ -588,24 +644,41 @@ def ecPrelude : DecodeTables where
      ("Top.CoreInt.mul", .intMul),
      ("Top.CoreInt.opp", .intOpp),
      ("Top.IntDiv.edivz", .intEdivz),
+     ("Top.edivz", .intEdivz),
      ("Top.CoreInt.absz", .intAbsz),
      ("Top.gcd", .intGcd),
      ("Top.CoreInt.le", .intLe),
+     ("Top.Int.min", .intMin),
+     ("Top.Int.max", .intMax),
      ("Top.CoreInt.lt", .intLt),
      ("Top.FMap._.[_<-_]", .mapSet),
      ("Top.FMap._.[_]", .mapLookup),
      ("Top.FMap.dom", .mapMem),
+     ("Top.FMap.rem", .mapRem),
+     ("Top.FMap.fdom", .mapFdom),
+     ("Top.FMap.rng", .mapRng),
+     ("Top.Array._.[_<-_]", .listSet),
+     ("Top.List.take", .listTake), ("Top.take", .listTake),
+     ("Top.FSet.elems", .fsetElems),
+     ("Top.List.++", .listCat),
+     ("Top.List.zip", .listZip),
+     ("Top.List.flatten", .listFlatten),
+     ("Top.Array._.[_]", .arrayGet),
      ("Top.Logic.oget", .mapOget),
      ("Top.Logic.odflt", .mapOdflt),
      ("Top.FSet.fset1", .fsetSingle),
      ("Top.FSet.`|`", .fsetUnion),
      ("Top.FSet.mem", .fsetMem),
+     ("Top.FSet.card", .fsetCard),
+     ("Top.FSet.\\subset", .fsetSubset),
      ("Top.Logic.Some", .someE),
+     ("Top.Some", .someE),
      ("Top.List.::", .listCons),
      ("Top.List.rcons", .listRcons),
      ("Top.List.size", .listSize),
      ("Top.List.mem", .listMem),
      ("Top.List.nth", .listNth),
+     ("Top.List.head", .listHead),
      ("Top.List.uniq", .listUniq),
      ("Top.List.map", .listMap),
      ("Top.List.filter", .listFilter),
@@ -624,6 +697,7 @@ def ecPrelude : DecodeTables where
      ("Top.size", .listSize),
      ("Top.mem", .listMem),
      ("Top.nth", .listNth),
+     ("Top.head", .listHead),
      ("Top.uniq", .listUniq),
      ("Top.map", .listMap),
      ("Top.filter", .listFilter),
@@ -642,10 +716,11 @@ def ecPrelude : DecodeTables where
      ("Top.Distr.DConditional.dcond", .dcond),
      ("Top.Dexcepted.\\", .dexcepted),
      ("Top.Distr.dlet", .dlet),
+     ("Top.DList.dlist", .dlistOp),
      ("Top.Distr.`*`", .dprod),
      ("Top.Distr.dscale", .dscale),
      ("Top.Distr.drestrict", .drestrict)]
-  distrTyPaths := ["Top.Distr.distr", "Top.Pervasive.distr"]
+  distrTyPaths := ["Top.Distr.distr", "Top.Pervasive.distr", "Top.distr"]
   absOpPaths := []
   defOpPaths := []
   polyOpPaths := []
@@ -784,6 +859,41 @@ def DecodeTables.withProcSig (T : DecodeTables) (q : String) (s : EcSig) :
     DecodeTables :=
   { T with procSigs := (q, s) :: T.procSigs }
 
+/-- Drop the characters inside balanced parentheses, and the parentheses. -/
+private def dropParenGroups : List Char → Nat → List Char → List Char
+  | [], _, acc => acc.reverse
+  | '(' :: rest, d, acc => dropParenGroups rest (d + 1) acc
+  | ')' :: rest, d, acc => dropParenGroups rest (d - 1) acc
+  | c :: rest, d, acc => if d = 0 then dropParenGroups rest d (c :: acc)
+                         else dropParenGroups rest d acc
+
+/-- A cross-path with the module-application groups removed: `A(O1(S))./scout`
+is `A./scout`, and a path with no application is itself.
+
+A procedure's signature is declared by its module's type and does not depend on
+the modules a functor is applied to, so the head resolves a signature the applied
+path does not. This is used for the signature only — the call keeps the path the
+source wrote, so the resolution environment is asked for exactly the image the
+source named, and one it does not bind fails at that call rather than silently
+resolving to the head's procedures. Which module `O(S)` is remains the caller's
+to supply, as `FormEnv.functorImages` supplies it at the statement layer. -/
+def callHeadPath (q : String) : String := (dropParenGroups q.toList 0 []).asString
+
+/-- The signature of a call target: the path the source wrote, or failing that
+its head. -/
+def lookupProcSig (T : DecodeTables) (q : String) : Option EcSig :=
+  match List.lookup q T.procSigs with
+  | some s => some s
+  | none =>
+    let h := callHeadPath q
+    if h == q then none else List.lookup h T.procSigs
+
+-- An application group resolves at the head, and a plain path is unchanged.
+#guard callHeadPath "A(O1(S))./scout" == "A./scout"
+#guard callHeadPath "O(S)./init" == "O./init"
+#guard callHeadPath "Top.ROM.SetLog.Log(H)./init" == "Top.ROM.SetLog.Log./init"
+#guard callHeadPath "Top.M./f" == "Top.M./f"
+
 /-- Extend the tables with the procedure signatures of an interface, keyed by
 the cross-paths a body calls them by: `xqualify pfx p` for each declared
 `p`. This is how a functor parameter's procedures become resolvable at a call
@@ -805,6 +915,17 @@ def EcVal.transport (v : EcVal) {t : EcTy} (h : v.ty = t) : t.interp :=
 def EcExpr.castTy {a b : EcTy} (h : a = b) (e : EcExpr a) : EcExpr b :=
   cast (congrArg EcExpr h) e
 
+/-- The arguments of an application as one value: a single argument keeps its own
+code, and several nest to the right, the nesting a procedure's formals and an
+operator declaration's argument code both carry (`EcTerm.nestArgs` is the same at
+the term layer). -/
+def EcExpr.nestArgs : ((t : EcTy) × EcExpr t) → List ((t : EcTy) × EcExpr t) →
+    (t : EcTy) × EcExpr t
+  | a, [] => a
+  | a, b :: rest =>
+      let r := EcExpr.nestArgs b rest
+      Sigma.mk (EcTy.prod a.1 r.1) (EcExpr.pair a.2 r.2)
+
 /-- Transport a procedure along an equality of signatures. -/
 def EcProcAt.castSig {s s' : EcSig} (h : s = s') (p : EcProcAt s) : EcProcAt s' :=
   cast (congrArg EcProcAt h) p
@@ -818,6 +939,30 @@ of it destructures by that nesting — a triple's components are `fst`,
 def nestTuple (a : EcTy) : List EcTy → EcTy
   | [] => a
   | b :: rest => .prod a (nestTuple b rest)
+
+/-- The signature a read of the operator `p` resolves at: the declared signature
+of an abstract declaration, and for a definition the signature its parameters and
+body type give.
+
+A definition resolved this way is read as a **parameter** — the program is
+parametric in it, and a statement about that program binds it through
+`EcForm.allOp`. That is weaker than reading the definition's body, and it is what
+this layer can express: `decodeExpr` recurses on the node, and a definition's body
+is not a sub-node of the read, so expanding it here would need the lexicographic
+measure the formula layer carries. The weaker reading is sound — a theorem holding
+for every realization holds for the source's own — and the survey reports such an
+item as parameterised rather than closed, so nothing counts as fully decoded on
+the strength of it. -/
+def opSigOf (T : DecodeTables) (p : String) : Option EcSig :=
+  match List.lookup p T.absOpPaths with
+  | some s => some s
+  | none =>
+    match List.lookup p T.defOpPaths with
+    | some d =>
+      match d.params with
+      | [] => some ⟨.unit, d.res⟩
+      | (_, u) :: rest => some ⟨nestTuple u (rest.map (·.2)), d.res⟩
+    | none => none
 
 /-- Decode an EasyCrypt type node. -/
 def decodeTy (T : DecodeTables) (j : Json) : Except String EcTy :=
@@ -1049,8 +1194,26 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
         else
           match List.lookup p T.constPaths with
           | none =>
-            fail s!"unknown nullary operator path '{p}': the ingestion's constant \
-              table has no entry, so the operator has no EcExpr image"
+            -- A constant the theory declares without a definition is a parameter
+            -- of the program that reads it, read at the signature its declaration
+            -- gives it. A declaration of no arguments is applied at the unit
+            -- value, which is the convention `EcSig` fixes for one.
+            match opSigOf T p with
+            | some s =>
+              if hres : s.res = t then
+                if harg : s.arg = EcTy.unit then
+                  .ok (EcExpr.castTy hres
+                    (.opApp p s (EcExpr.castTy harg.symm (.lit (t := .unit) ()))))
+                else
+                  fail s!"the abstract operator '{p}' is declared at argument \
+                    type {repr s.arg} and read with no arguments"
+              else
+                fail s!"the abstract operator '{p}' is declared at result type \
+                  {repr s.res}, context expects {repr t}"
+            | none =>
+              fail s!"unknown nullary operator path '{p}': neither the \
+                ingestion's constant table nor its abstract-declaration table \
+                has an entry, so the operator has no EcExpr image"
           | some v =>
             if h : v.ty = t then .ok (.lit (v.transport h))
             else
@@ -1061,6 +1224,10 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
         match _harr : getArr j "args" with
         | .error e => .error e
         | .ok arr =>
+          -- A tuple of more than two components is the right-nested pair its
+          -- code already is: `decodeTy` nests an n-ary `Ttuple` as
+          -- `t₁ × (t₂ × … × tₙ)`, which is the nesting a procedure's formals
+          -- carry, so the components decode against the code's own spine.
           match arr.toList.attach with
           | [⟨x, _⟩, ⟨y, _⟩] =>
             match decodeExpr T a x with
@@ -1069,7 +1236,42 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
               match decodeExpr T b y with
               | .error e => .error e
               | .ok ye => .ok (.pair xe ye)
-          | _ => fail s!"tuple of {arr.size} components at a binary product code"
+          | [⟨x, _⟩, ⟨y, _⟩, ⟨z, _⟩] =>
+            match b with
+            | .prod b1 b2 =>
+              match decodeExpr T a x with
+              | .error e => .error e
+              | .ok xe =>
+                match decodeExpr T b1 y with
+                | .error e => .error e
+                | .ok ye =>
+                  match decodeExpr T b2 z with
+                  | .error e => .error e
+                  | .ok ze => .ok (.pair xe (.pair ye ze))
+            | _ =>
+              fail s!"tuple of 3 components at the code {repr t}, whose second \
+                component is not itself a product"
+          | [⟨x, _⟩, ⟨y, _⟩, ⟨z, _⟩, ⟨w, _⟩] =>
+            match b with
+            | .prod b1 (.prod b2 b3) =>
+              match decodeExpr T a x with
+              | .error e => .error e
+              | .ok xe =>
+                match decodeExpr T b1 y with
+                | .error e => .error e
+                | .ok ye =>
+                  match decodeExpr T b2 z with
+                  | .error e => .error e
+                  | .ok ze =>
+                    match decodeExpr T b3 w with
+                    | .error e => .error e
+                    | .ok we => .ok (.pair xe (.pair ye (.pair ze we)))
+            | _ =>
+              fail s!"tuple of 4 components at the code {repr t}, whose spine is \
+                not three nested products"
+          | _ =>
+            fail s!"tuple of {arr.size} components: the decoder nests two, three \
+              and four against the code's own spine"
       | _ => fail s!"tuple at type {repr t}: only a prod code has one"
     | .ok "Eproj" =>
       match _htgt : getObj j "target" with
@@ -1101,7 +1303,7 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
             | _ =>
               fail s!"projection target has type {repr pty}, which is not a product"
     | .ok "Eapp" =>
-      match getObj j "f" with
+      match _hfhd : getObj j "f" with
       | .error e => .error e
       | .ok fJ =>
         match getStr fJ "kind" with
@@ -1112,9 +1314,46 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
           | .ok p =>
             match List.lookup p T.opPaths with
             | none =>
-              fail s!"unknown operator path '{p}' applied in {j.compress}: the \
-                ingestion's operator table has no entry, so the application has \
-                no EcExpr image"
+              -- An operator the theory declares without a definition is a
+              -- parameter of the program that reads it. The argument count comes
+              -- from the application and the argument codes from the
+              -- declaration, so an argument list whose types do not nest into
+              -- the declared argument code is a mismatch between the two and is
+              -- named as one.
+              match opSigOf T p with
+              | some s =>
+                if hres : s.res = t then
+                  match _harr : getArr j "args" with
+                  | .error e => .error e
+                  | .ok arr =>
+                    match arr.toList.attach.mapM (fun ⟨x, _⟩ =>
+                        match decodeTyField T x "ty" with
+                        | .error e => Except.error e
+                        | .ok u =>
+                          match decodeExpr T u x with
+                          | .error e => Except.error e
+                          | .ok xe => Except.ok (Sigma.mk u xe)) with
+                    | .error e => .error e
+                    | .ok [] =>
+                      fail s!"the abstract operator '{p}' is applied to no \
+                        arguments in {j.compress}"
+                    | .ok (a :: rest) =>
+                      let n := EcExpr.nestArgs a rest
+                      if harg : n.1 = s.arg then
+                        .ok (EcExpr.castTy hres
+                          (.opApp p s (EcExpr.castTy harg n.2)))
+                      else
+                        fail s!"the abstract operator '{p}' is declared at \
+                          argument type {repr s.arg} and applied to {arr.size} \
+                          arguments, whose types nest as {repr n.1}"
+                else
+                  fail s!"the abstract operator '{p}' is declared at result type \
+                    {repr s.res}, context expects {repr t}"
+              | none =>
+                fail s!"unknown operator path '{p}' applied in {j.compress}: \
+                  neither the ingestion's operator table nor its \
+                  abstract-declaration table has an entry, so the application \
+                  has no EcExpr image"
             | some op =>
               match _harr : getArr j "args" with
               | .error e => .error e
@@ -1259,6 +1498,30 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                       | .error e => .error e
                       | .ok ye => .ok (.intLe xe ye)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .intMin, .int =>
+                  -- `Int.ec` defines `min a b = if a < b then a else b`, and the
+                  -- strict order is the negation of the reversed `≤`, which is
+                  -- how the AST already reads `<`. The reading is that
+                  -- definition, not a new commitment about `min`.
+                  match arr.toList.attach with
+                  | [⟨x, _⟩, ⟨y, _⟩] =>
+                    match decodeExpr T .int x with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T .int y with
+                      | .error e => .error e
+                      | .ok ye => .ok (.ite (.bnot (.intLe ye xe)) xe ye)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .intMax, .int =>
+                  match arr.toList.attach with
+                  | [⟨x, _⟩, ⟨y, _⟩] =>
+                    match decodeExpr T .int x with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T .int y with
+                      | .error e => .error e
+                      | .ok ye => .ok (.ite (.bnot (.intLe ye xe)) ye xe)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                 | .intLt, .bool =>
                   match arr.toList.attach with
                   | [⟨x, _⟩, ⟨y, _⟩] =>
@@ -1297,6 +1560,16 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                     | .ok u =>
                       fail s!"'{p}' is applied to a value of type {repr u}, which \
                         is not a finite map"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .mapRem, .map a b =>
+                  match arr.toList.attach with
+                  | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                    match decodeExpr T (.map a b) mJ with
+                    | .error e => .error e
+                    | .ok me =>
+                      match decodeExpr T a kJ with
+                      | .error e => .error e
+                      | .ok ke => .ok (.mapRem me ke)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                 | .mapLookup, _ =>
                   fail s!"the finite-map lookup '{p}' in {j.compress}: it returns \
@@ -1457,6 +1730,22 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                       fail s!"'{p}' is applied to a value of type {repr u}, \
                         which is not a list"
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .listMem, .arrow a .bool =>
+                  -- `mem s` partially applied is the predicate `fun x => mem s x`,
+                  -- which is how a list membership reaches `has` and `filter`.
+                  match arr.toList.attach with
+                  | [⟨lJ, _⟩] =>
+                    if !a.hasEq then
+                      fail s!"'{p}' at the element type {repr a}: membership \
+                        compares elements, and that type has no decidable equality"
+                    else
+                      match decodeExpr T (.list a) lJ with
+                      | .error e => .error e
+                      | .ok le =>
+                        .ok (.lam a (EcVarId.mk "$eta" (some 0))
+                          (.listMem le (.var a (EcVarId.mk "$eta" (some 0)))))
+                  | _ =>
+                    fail s!"'{p}' at an arrow code applied to {arr.size} arguments, expected 1"
                 | .listMem, .bool =>
                   match arr.toList.attach with
                   | [⟨lJ, _⟩, ⟨xJ, _⟩] =>
@@ -1478,6 +1767,106 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                       fail s!"'{p}' is applied to a value of type {repr u}, \
                         which is not a list"
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .listMap, .list b =>
+                  match arr.toList.attach with
+                  | [⟨fJ, _⟩, ⟨lJ, _⟩] =>
+                    match decodeTyField T lJ "ty" with
+                    | .error e => .error e
+                    | .ok (.list a) =>
+                      match decodeExpr T (.arrow a b) fJ with
+                      | .error e => .error e
+                      | .ok fe =>
+                        match decodeExpr T (.list a) lJ with
+                        | .error e => .error e
+                        | .ok le => .ok (.listMap fe le)
+                    | .ok u =>
+                      fail s!"'{p}' is applied to a value of type {repr u}, which is not a list"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .listHas, .bool =>
+                  match arr.toList.attach with
+                  | [⟨pJ, _⟩, ⟨lJ, _⟩] =>
+                    match decodeTyField T lJ "ty" with
+                    | .error e => .error e
+                    | .ok (.list a) =>
+                      match decodeExpr T (.arrow a .bool) pJ with
+                      | .error e => .error e
+                      | .ok pe =>
+                        match decodeExpr T (.list a) lJ with
+                        | .error e => .error e
+                        | .ok le => .ok (.listHas pe le)
+                    | .ok u =>
+                      fail s!"'{p}' is applied to a value of type {repr u}, which is not a list"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .listUniq, .bool =>
+                  match arr.toList.attach with
+                  | [⟨lJ, _⟩] =>
+                    match decodeTyField T lJ "ty" with
+                    | .error e => .error e
+                    | .ok (.list a) =>
+                      match decodeExpr T (.list a) lJ with
+                      | .error e => .error e
+                      | .ok le => .ok (.listUniq le)
+                    | .ok u =>
+                      fail s!"'{p}' is applied to a value of type {repr u}, which is not a list"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .listFlatten, .list a =>
+                  match arr.toList.attach with
+                  | [⟨lJ, _⟩] =>
+                    match decodeExpr T (.list (.list a)) lJ with
+                    | .error e => .error e
+                    | .ok le => .ok (.listFlatten le)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .listZip, .list (.prod a b) =>
+                  match arr.toList.attach with
+                  | [⟨xJ, _⟩, ⟨yJ, _⟩] =>
+                    match decodeExpr T (.list a) xJ with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T (.list b) yJ with
+                      | .error e => .error e
+                      | .ok ye => .ok (.listZip xe ye)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .listCat, .list a =>
+                  match arr.toList.attach with
+                  | [⟨xJ, _⟩, ⟨yJ, _⟩] =>
+                    match decodeExpr T (.list a) xJ with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T (.list a) yJ with
+                      | .error e => .error e
+                      | .ok ye => .ok (.listCat xe ye)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .fsetElems, .list a =>
+                  match arr.toList.attach with
+                  | [⟨sJ, _⟩] =>
+                    match decodeExpr T (.fset a) sJ with
+                    | .error e => .error e
+                    | .ok se => .ok (.fsetElems se)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .listTake, .list a =>
+                  -- `take n xs`: the count comes first in the source.
+                  match arr.toList.attach with
+                  | [⟨nJ, _⟩, ⟨lJ, _⟩] =>
+                    match decodeExpr T .int nJ with
+                    | .error e => .error e
+                    | .ok ne =>
+                      match decodeExpr T (.list a) lJ with
+                      | .error e => .error e
+                      | .ok le => .ok (.listTake le ne)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .listSet, .list a =>
+                  match arr.toList.attach with
+                  | [⟨lJ, _⟩, ⟨iJ, _⟩, ⟨xJ, _⟩] =>
+                    match decodeExpr T (.list a) lJ with
+                    | .error e => .error e
+                    | .ok le =>
+                      match decodeExpr T .int iJ with
+                      | .error e => .error e
+                      | .ok ie =>
+                        match decodeExpr T a xJ with
+                        | .error e => .error e
+                        | .ok xe => .ok (.listSet le ie xe)
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 3"
                 | .listNth, u =>
                   match arr.toList.attach with
                   | [⟨dJ, _⟩, ⟨lJ, _⟩, ⟨iJ, _⟩] =>
@@ -1501,6 +1890,86 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                       fail s!"'{p}' is applied to a value of type {repr w}, \
                         which is not a list"
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 3"
+                | .listHead, u =>
+                  match arr.toList.attach with
+                  | [⟨zJ, _⟩, ⟨lJ, _⟩] =>
+                    match decodeTyField T lJ "ty" with
+                    | .error e => .error e
+                    | .ok (.list a) =>
+                      if a = u then
+                        match decodeExpr T u zJ with
+                        | .error e => .error e
+                        | .ok ze =>
+                          match decodeExpr T (.list u) lJ with
+                          | .error e => .error e
+                          | .ok le => .ok (.listHead ze le)
+                      else
+                        fail s!"'{p}' of a list whose element type is \
+                          {repr a}, context expects {repr u}"
+                    | .ok w =>
+                      fail s!"'{p}' is applied to a value of type {repr w}, \
+                        which is not a list"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .arrayGet, u =>
+                  match arr.toList.attach with
+                  | [⟨lJ, _⟩, ⟨iJ, _⟩] =>
+                    match decodeTyField T lJ "ty" with
+                    | .error e => .error e
+                    | .ok (.list a) =>
+                      if a = u then
+                        match decodeExpr T (.list u) lJ with
+                        | .error e => .error e
+                        | .ok le =>
+                          match decodeExpr T .int iJ with
+                          | .error e => .error e
+                          | .ok ie => .ok (.listNth (.lit default) le ie)
+                      else
+                        fail s!"'{p}' of an array whose element type is \
+                          {repr a}, context expects {repr u}"
+                    | .ok w =>
+                      fail s!"'{p}' is applied to a value of type {repr w}, \
+                        which is not an array"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .mapFdom, .fset a =>
+                  match arr.toList.attach with
+                  | [⟨mJ, _⟩] =>
+                    match decodeTyField T mJ "ty" with
+                    | .error e => .error e
+                    | .ok (.map k b) =>
+                      if h : k = a then
+                        match decodeExpr T (.map k b) mJ with
+                        | .error e => .error e
+                        | .ok me =>
+                          .ok (EcExpr.castTy (congrArg EcTy.fset h)
+                            (EcExpr.mapFdom (a := k) (b := b) me))
+                      else
+                        fail s!"'{p}' of a map whose key type is {repr k}, \
+                          context expects a set of {repr a}"
+                    | .ok w =>
+                      fail s!"'{p}' is applied to a value of type {repr w}, \
+                        which is not a finite map"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .mapRng, .bool =>
+                  match arr.toList.attach with
+                  | [⟨mJ, _⟩, ⟨yJ, _⟩] =>
+                    match decodeTyField T mJ "ty" with
+                    | .error e => .error e
+                    | .ok (.map a b) =>
+                      if !b.hasEq then
+                        fail s!"'{p}' of a map whose value type is {repr b}: \
+                          the range test compares values, and that type has no \
+                          decidable equality"
+                      else
+                        match decodeExpr T (.map a b) mJ with
+                        | .error e => .error e
+                        | .ok me =>
+                          match decodeExpr T b yJ with
+                          | .error e => .error e
+                          | .ok ye => .ok (.mapRng me ye)
+                    | .ok w =>
+                      fail s!"'{p}' is applied to a value of type {repr w}, \
+                        which is not a finite map"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                 | .fsetSingle, .fset a =>
                   match arr.toList.attach with
                   | [⟨xJ, _⟩] =>
@@ -1534,11 +2003,78 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
                       fail s!"'{p}' is applied to a value of type {repr u}, which \
                         is not a finite set"
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .fsetCard, .int =>
+                  match arr.toList.attach with
+                  | [⟨sJ, _⟩] =>
+                    match decodeTyField T sJ "ty" with
+                    | .error e => .error e
+                    | .ok (.fset a) =>
+                      match decodeExpr T (.fset a) sJ with
+                      | .error e => .error e
+                      | .ok se => .ok (.fsetCard se)
+                    | .ok u =>
+                      fail s!"'{p}' is applied to a value of type {repr u}, which \
+                        is not a finite set"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+                | .fsetSubset, .bool =>
+                  match arr.toList.attach with
+                  | [⟨sJ, _⟩, ⟨tJ, _⟩] =>
+                    match decodeTyField T sJ "ty" with
+                    | .error e => .error e
+                    | .ok (.fset a) =>
+                      match decodeExpr T (.fset a) sJ with
+                      | .error e => .error e
+                      | .ok se =>
+                        match decodeExpr T (.fset a) tJ with
+                        | .error e => .error e
+                        | .ok te => .ok (.fsetSubset se te)
+                    | .ok u =>
+                      fail s!"'{p}' is applied to a value of type {repr u}, which \
+                        is not a finite set"
+                  | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                 | _, _ =>
                   fail s!"operator '{p}' cannot produce a value of type {repr t}"
-        | .ok k =>
-          fail s!"application of a head of kind '{k}': the AST applies operators \
-            only, and has no higher-order application"
+        | .ok _ =>
+          -- A head that is not an operator is a function value — a formal
+          -- parameter or a local at an arrow code, which is how a higher-order
+          -- procedure receives one. Application is curried, so the arguments are
+          -- consumed one at a time against the head's own arrow spine.
+          match decodeTyField T fJ "ty" with
+          | .error e => .error e
+          | .ok fty =>
+            match _harr : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match fty, arr.toList.attach with
+              | .arrow a b, [⟨xJ, _⟩] =>
+                if hres : b = t then
+                  match decodeExpr T (.arrow a b) fJ with
+                  | .error e => .error e
+                  | .ok fe =>
+                    match decodeExpr T a xJ with
+                    | .error e => .error e
+                    | .ok xe => .ok (EcExpr.castTy hres (.app fe xe))
+                else
+                  fail s!"an application at {repr fty} returns {repr b}, and the \
+                    context expects {repr t}"
+              | .arrow a (.arrow b c), [⟨xJ, _⟩, ⟨yJ, _⟩] =>
+                if hres : c = t then
+                  match decodeExpr T (.arrow a (.arrow b c)) fJ with
+                  | .error e => .error e
+                  | .ok fe =>
+                    match decodeExpr T a xJ with
+                    | .error e => .error e
+                    | .ok xe =>
+                      match decodeExpr T b yJ with
+                      | .error e => .error e
+                      | .ok ye => .ok (EcExpr.castTy hres (.app (.app fe xe) ye))
+                else
+                  fail s!"an application at {repr fty} returns {repr c}, and the \
+                    context expects {repr t}"
+              | _, _ =>
+                fail s!"an application of a head at {repr fty} to {arr.size} \
+                  arguments: the decoder consumes one and two against the head's \
+                  arrow spine"
     | .ok "Eif" =>
       -- Both branches are expressions, at the code the conditional itself has.
       match _hc : getObj j "cond" with
@@ -1563,13 +2099,80 @@ def decodeExpr (T : DecodeTables) (t : EcTy) (j : Json) : Except String (EcExpr 
       fail s!"let expression in {j.compress}: EcExpr has no binder, and \
         EcStmt.assign is the only image of a local binding"
     | .ok "Ematch" => fail s!"match expression in {j.compress}: EcExpr has no match"
-    | .ok "Equant" => fail s!"quantified expression in {j.compress}: EcExpr has no binder"
+    | .ok "Equant" =>
+      -- A lambda binds one variable over a body at the codomain of the arrow the
+      -- node sits at. `EForall` and `EExists` are a different matter: they denote
+      -- a proposition, and the expression layer has no decision procedure to read
+      -- one at `bool`, so only `ELambda` decodes here.
+      match getStr j "quant" with
+      | .error e => .error e
+      | .ok "ELambda" =>
+        match t with
+        | .arrow a b =>
+          match getArr j "binders" with
+          | .error e => .error e
+          | .ok bs =>
+            match bs.toList with
+            | [bJ] =>
+              match getStampedIdent bJ with
+              | .error e => .error e
+              | .ok x =>
+                match _hlb : getObj j "body" with
+                | .error e => .error e
+                | .ok bodyJ =>
+                  match decodeExpr T b bodyJ with
+                  | .error e => .error e
+                  | .ok be => .ok (.lam a x be)
+            | _ =>
+              fail s!"a lambda of {bs.size} binders in {j.compress}: the AST binds \
+                one at a time, and the exporter writes the binders it wrote"
+        | _ =>
+          fail s!"a lambda at the code {repr t}, which is not an arrow"
+      | .ok q =>
+        -- `EForall` and `EExists` denote a proposition, whose value at the
+        -- `bool` code is its classical decision — the reading `EcTerm.forallB`
+        -- already has at the term layer.
+        if q = "EForall" || q = "EExists" then
+          match t with
+          | .bool =>
+            match getArr j "binders" with
+            | .error e => .error e
+            | .ok bs =>
+              match bs.toList with
+              | [bJ] =>
+                match decodeTyField T bJ "ty" with
+                | .error e => .error e
+                | .ok a =>
+                  match getStampedIdent bJ with
+                  | .error e => .error e
+                  | .ok x =>
+                    match _hlb : getObj j "body" with
+                    | .error e => .error e
+                    | .ok bodyJ =>
+                      match decodeExpr T .bool bodyJ with
+                      | .error e => .error e
+                      | .ok be =>
+                        .ok (if q = "EForall" then .forallB a x be else .existsB a x be)
+              | _ =>
+                fail s!"a quantified expression of {bs.size} binders in \
+                  {j.compress}: the AST binds one at a time"
+          | _ =>
+            fail s!"a quantified expression at the code {repr t}: an EasyCrypt \
+              quantifier is a proposition, which is a value of bool"
+        else
+          fail s!"a quantified expression '{q}' in {j.compress}: only a lambda \
+            and the two quantifiers have an expression image"
     | .ok "Unsupported" => fail (unsupportedMsg j)
     | .ok k => fail s!"unsupported expression node kind '{k}' in {j.compress}"
 termination_by jsonSize j
 decreasing_by
   all_goals first
     | exact getObj_decreases _htgt
+    -- The head of an application is a field of it, so it is smaller than the
+    -- node; the arguments are elements of its `args` array.
+    | exact getObj_decreases _hfhd
+    -- A lambda's body is a field of the node.
+    | exact getObj_decreases _hlb
     -- The branches and the condition of a conditional expression are fields of
     -- it, so each is smaller than the node.
     | exact getObj_decreases _hc
@@ -1634,23 +2237,49 @@ could reference, and the space makes the name one no EasyCrypt identifier can
 be, so the binding cannot capture a source variable. -/
 def anonymousParam (i : Nat) : String := "_ " ++ toString i
 
-/-- Decode a tuple lvalue's components: each is a local program variable at
-its declared type. A global component is rejected — a write to a global is a
-store, and `EcStmt.assignTuple` binds local names only. -/
+/-- The local a hoisted global read binds: deterministic per global, and the
+space makes the name one no EasyCrypt identifier can be, so the binding cannot
+capture a source variable. Two statements hoisting one global reuse the name,
+and each statement's own load precedes it. -/
+def hoistedGlobal (q : String) : String := "_ " ++ q
+
+/-- A component of a tuple lvalue: the local name the destructuring binds, its
+type code, and the global that name is stored into afterwards when the source
+writes one. -/
+structure LvTupleItem where
+  /-- The local name the destructuring binds the component to. -/
+  name : String
+  /-- The component's type code. -/
+  ty : EcTy
+  /-- The global the component is written to, when the source names one. -/
+  global : Option EcGlobal
+
+/-- Decode a tuple lvalue's components. `EcStmt.assignTuple` and
+`EcStmt.callProcTuple` bind local names, so a global component binds the name
+`hoistedGlobal` gives it — one no EasyCrypt identifier can be — and the store
+into the global follows the destructuring. A global outside the ingestion's
+table is a decode error rather than a local of that name. -/
 def decodeLvTupleItems (T : DecodeTables) (j : Json) :
-    Except String (List (String × EcTy)) := do
+    Except String (List LvTupleItem) := do
   let itemsA ← getArr j "items"
   itemsA.toList.mapM (fun it => do
     let pvJ ← getObj it "pv"
     let k ← getStr pvJ "kind"
-    if k ≠ "PVloc" then
-      fail s!"tuple lvalue component of kind '{k}' in {j.compress}: a tuple \
-        lvalue binds local variables, and a global component needs a store of \
-        its own"
-    else
+    if k = "PVloc" then
       let nm ← getIdent pvJ "name"
       let ty ← decodeTyField T it "ty"
-      .ok (nm, ty))
+      .ok { name := nm, ty := ty, global := none }
+    else if k = "PVglob" then
+      let q ← getStr pvJ "xpath"
+      match List.lookup q T.globals with
+      | some g => .ok { name := hoistedGlobal q, ty := g.ty, global := some g }
+      | none =>
+        fail s!"tuple lvalue component at the unknown global '{q}' in \
+          {j.compress}: the ingestion's global table has no entry, so the \
+          component names no heap cell"
+    else
+      fail s!"tuple lvalue component of kind '{k}' in {j.compress}: a tuple \
+        lvalue binds a local variable or writes a module global")
 
 /-- The global an expression node reads, when the node is a global-variable
 read. -/
@@ -1682,12 +2311,6 @@ them and the statement. A statement that also writes one of the read globals
 (`M.c <- M.c + 1`, the counter idiom) reads the pre-write snapshot either way.
 A write through a tuple lvalue cannot interact: a tuple lvalue with a global
 component is rejected before hoisting is reached. -/
-
-/-- The local a hoisted global read binds: deterministic per global, and the
-space makes the name one no EasyCrypt identifier can be, so the binding cannot
-capture a source variable. Two statements hoisting one global reuse the name,
-and each statement's own load precedes it. -/
-def hoistedGlobal (q : String) : String := "_ " ++ q
 
 /-- Append the globals of `more` that `acc` does not already hold, keeping
 first-occurrence order. -/
@@ -1737,12 +2360,25 @@ def hoistGlobalReads (T : DecodeTables) (j : Json) : List EcGlobal × Json :=
       let r := hoistGlobalReads T tJ
       (r.1, j.setObjVal! "target" r.2)
     | .error _ => ([], j)
+  | .ok "Eif" =>
+    match _hcd : j.getObjVal? "cond", _hth : j.getObjVal? "then",
+          _hel : j.getObjVal? "else" with
+    | .ok cJ, .ok tJ, .ok eJ =>
+      let rc := hoistGlobalReads T cJ
+      let rt := hoistGlobalReads T tJ
+      let re := hoistGlobalReads T eJ
+      (mergeGlobals (mergeGlobals rc.1 rt.1) re.1,
+        ((j.setObjVal! "cond" rc.2).setObjVal! "then" rt.2).setObjVal! "else" re.2)
+    | _, _, _ => ([], j)
   | _ => ([], j)
 termination_by jsonSize j
 decreasing_by
   all_goals first
     | exact getObjVal?_decreases _hf
     | exact getObjVal?_decreases _htg
+    | exact getObjVal?_decreases _hcd
+    | exact getObjVal?_decreases _hth
+    | exact getObjVal?_decreases _hel
     | exact getArr_decreases _ha (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
     | exact getArr_decreases _ht (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
 
@@ -1830,13 +2466,76 @@ def decodeLambdaHeader (T : DecodeTables) (j : Json) : Except String (Lambda1 j)
         fail s!"lambda of {bs.size} binders in {j.compress}: a distribution \
           operator's function argument has an image only at one binder"
 
+/-- The source name of the binder an eta-expansion introduces. The stamp makes
+it a bound identifier rather than a program variable, and the character `$` is
+outside EasyCrypt's identifier alphabet, so the name is bound by no exported
+binder and captures nothing in the body. -/
+def etaBinderName : String := "$eta"
+
+/-- The node kinds an eta-expansion accepts at the head of a function-typed
+node. An operator only: a variable head at an arrow code is a function value the
+context already applies through `EcExpr.app`, and eta-expanding it instead
+changes what a distribution operator's predicate argument denotes. -/
+def etaHeadKinds : List String := ["Eop"]
+
+/-- The one-binder lambda a partially applied function-typed node denotes: a
+node at a function type whose head is an operator stands for
+`fun x => node x`. The result is the binder's type code, the binder's identity,
+and the body node — the head applied to the node's own arguments and a read of
+the binder.
+
+EasyCrypt writes a predicate argument eta-reduced, as in `d \ (mem X)` and
+`d \ X`, and the exporter records the partial application it wrote. -/
+def etaFunArg (T : DecodeTables) (j : Json) :
+    Except String (EcTy × EcVarId × Json) := do
+  let tyJ ← getObj j "ty"
+  let tk ← getStr tyJ "kind"
+  if tk ≠ "Tfun" then
+    fail s!"the node {j.compress} has type kind '{tk}', so it is no partially \
+      applied function"
+  else
+    let domJ ← getObj tyJ "dom"
+    let codJ ← getObj tyJ "cod"
+    let a ← decodeTy T domJ
+    let kind ← getStr j "kind"
+    let hd ←
+      if etaHeadKinds.contains kind then pure j
+      else if kind = "Eapp" then getObj j "f"
+      else
+        fail s!"the node {j.compress} is of kind '{kind}', and only an \
+          operator or an application of one has an eta-expansion"
+    let hdKind ← getStr hd "kind"
+    if !etaHeadKinds.contains hdKind then
+      fail s!"the head of {j.compress} is of kind '{hdKind}', and only an \
+        operator head has an eta-expansion"
+    else
+      let args ← if kind = "Eapp" then getArr j "args" else pure #[]
+      let xJ := Json.mkObj
+        [("kind", Json.str "Elocal"), ("name", Json.str etaBinderName),
+         ("stamp", Json.num 0), ("ty", domJ)]
+      .ok (a, { name := etaBinderName, stamp := some 0 },
+        Json.mkObj
+          [("kind", Json.str "Eapp"), ("f", hd),
+           ("args", Json.arr (args.push xJ)), ("ty", codJ)])
+
 /-- Decode a one-binder lambda whose body is an expression at the type code
-`res`, as the binder's type code, the binder's identity, and the body. -/
+`res`, as the binder's type code, the binder's identity, and the body. A node
+that is not a lambda but is a partially applied operator at a function type
+decodes through its eta-expansion (`etaFunArg`). -/
 def decodeLambda1 (T : DecodeTables) (res : EcTy) (j : Json) :
-    Except String (EcTy × EcVarId × EcExpr res) := do
-  let l ← decodeLambdaHeader T j
-  let e ← decodeExpr T res l.body
-  .ok (l.ty, l.binder, e)
+    Except String (EcTy × EcVarId × EcExpr res) :=
+  match decodeLambdaHeader T j with
+  | .ok l =>
+    match decodeExpr T res l.body with
+    | .error e => .error e
+    | .ok e => .ok (l.ty, l.binder, e)
+  | .error m =>
+    match etaFunArg T j with
+    | .error _ => .error m
+    | .ok (a, x, bodyJ) =>
+      match decodeExpr T res bodyJ with
+      | .error e => .error e
+      | .ok e => .ok (a, x, e)
 
 /-- Decode an EasyCrypt distribution expression at the carrier code `t`. -/
 def decodeDistr (T : DecodeTables) (t : EcTy) (j : Json) :
@@ -1886,9 +2585,46 @@ def decodeDistr (T : DecodeTables) (t : EcTy) (j : Json) :
           | .ok p =>
             match List.lookup p T.distrOpPaths with
             | none =>
-              fail s!"unknown distribution operator path '{p}' applied in \
-                {j.compress}: the ingestion's distribution-operator table has no \
-                entry, so the distribution has no EcDistr image"
+              -- A theory declares `op d : u -> t distr` abstractly, so the
+              -- distribution sampled from is a parameter of the program at the
+              -- signature the declaration gives it. The expression layer reads
+              -- it, and `EcDistr.ofExpr` is the distribution that expression
+              -- denotes.
+              match opSigOf T p with
+              | some s =>
+                if hres : s.res = EcTy.distr t then
+                  match _harr : getArr j "args" with
+                  | .error e => .error e
+                  | .ok arr =>
+                    match arr.toList.attach.mapM (fun ⟨x, _⟩ =>
+                        match decodeTyField T x "ty" with
+                        | .error e => Except.error e
+                        | .ok u =>
+                          match decodeExpr T u x with
+                          | .error e => Except.error e
+                          | .ok xe => Except.ok (Sigma.mk u xe)) with
+                    | .error e => .error e
+                    | .ok [] =>
+                      fail s!"the abstract distribution operator '{p}' is \
+                        applied to no arguments in {j.compress}"
+                    | .ok (a :: rest) =>
+                      let n := EcExpr.nestArgs a rest
+                      if harg : n.1 = s.arg then
+                        .ok (.ofExpr (EcExpr.castTy hres
+                          (.opApp p s (EcExpr.castTy harg n.2))))
+                      else
+                        fail s!"the abstract distribution operator '{p}' is \
+                          declared at argument type {repr s.arg} and applied to \
+                          {arr.size} arguments, whose types nest as {repr n.1}"
+                else
+                  fail s!"the abstract operator '{p}' is declared at result type \
+                    {repr s.res}, and a distribution position expects \
+                    {repr (EcTy.distr t)}"
+              | none =>
+                fail s!"unknown distribution operator path '{p}' applied in \
+                  {j.compress}: neither the ingestion's distribution-operator \
+                  table nor its abstract-declaration table has an entry, so the \
+                  distribution has no EcDistr image"
             | some op =>
               match _harr : getArr j "args" with
               | .error e => .error e
@@ -1952,6 +2688,21 @@ def decodeDistr (T : DecodeTables) (t : EcTy) (j : Json) :
                         | .error e => .error e
                         | .ok d => .ok (.letD d l.binder body)
                   | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                | .dlistOp =>
+                  match t with
+                  | .list a =>
+                    match arr.toList.attach with
+                    | [⟨dJ, _⟩, ⟨nJ, _⟩] =>
+                      match decodeDistr T a dJ with
+                      | .error e => .error e
+                      | .ok d =>
+                        match decodeExpr T .int nJ with
+                        | .error e => .error e
+                        | .ok ne => .ok (.dlist d ne)
+                    | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                  | _ =>
+                    fail s!"'{p}' at the carrier {repr t}: a list of samples is a \
+                      distribution over a list"
                 | .dprod =>
                   match t with
                   | .prod u v =>
@@ -2075,6 +2826,19 @@ def withHoisted (gs : List EcGlobal) (s : EcStmt) : DecodedItem :=
   | [] => .stmt s
   | _ => .stmts (gs.map (fun g => .load g (hoistedGlobal g.name))) s
 
+/-- The stores a tuple lvalue's global components need, in component order. -/
+def lvTupleStores (items : List LvTupleItem) : List EcStmt :=
+  items.filterMap (fun i =>
+    i.global.map (fun g => EcStmt.store g (.var g.ty (EcVarId.ofName i.name))))
+
+/-- The destructuring `s` followed by the stores its global components need: the
+components bind local names, and a component the source wrote to a global is
+copied from its name into the heap cell once the destructuring has run. -/
+def withTupleStores (items : List LvTupleItem) (s : EcStmt) : DecodedItem :=
+  match (lvTupleStores items).reverse with
+  | [] => .stmt s
+  | last :: revInit => .stmts (s :: revInit.reverse) last
+
 /-- Resolve the loops of a decoded block against their initialisations. A loop
 whose immediately preceding statement is not an integer-literal assignment to
 its counter is a decode error: the iteration count is the distance from that
@@ -2144,15 +2908,24 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
         | .ok [_] =>
           fail s!"tuple lvalue of one component in {lvJ.compress}: the \
             exporter writes no such node"
-        | .ok ((x, tx) :: rest) =>
-          let t := nestTuple tx (rest.map (·.2))
+        | .ok (i0 :: rest) =>
+          let items := i0 :: rest
+          let t := nestTuple i0.ty (rest.map (·.ty))
           match getObj j "rhs" with
           | .error e => .error e
           | .ok rhsJ =>
             let (hgs, rhsJ') := hoistGlobalReads T rhsJ
             match decodeExpr T t rhsJ' with
             | .error e => .error e
-            | .ok e => .ok (withHoisted hgs (.assignTuple t (x :: rest.map (·.1)) e))
+            | .ok e =>
+              let pre := hgs.map (fun g => EcStmt.load g (hoistedGlobal g.name))
+              match (lvTupleStores items).reverse with
+              | [] =>
+                .ok (withHoisted hgs (.assignTuple t (items.map (·.name)) e))
+              | last :: revInit =>
+                .ok (.stmts
+                  (pre ++ .assignTuple t (items.map (·.name)) e :: revInit.reverse)
+                  last)
       | .ok _ =>
         match decodeLv T lvJ with
         | .error e => .error e
@@ -2183,6 +2956,41 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
     match getObj j "lv" with
     | .error e => .error e
     | .ok lvJ =>
+      match getStr lvJ "kind" with
+      | .ok "LvTuple" =>
+        -- Sampling writes one variable, so a sample destructured across several
+        -- is the sample into a scratch local followed by the destructuring the
+        -- AST already has, at the components' code as a right-nested product.
+        match decodeLvTupleItems T lvJ with
+        | .error e => .error e
+        | .ok [] =>
+          fail s!"tuple lvalue of no components in {lvJ.compress}: the exporter \
+            writes no such node"
+        | .ok [_] =>
+          fail s!"tuple lvalue of one component in {lvJ.compress}: the exporter \
+            writes no such node"
+        | .ok (i0 :: rest) =>
+          let items := i0 :: rest
+          let t := nestTuple i0.ty (rest.map (·.ty))
+          match getObj j "distr" with
+          | .error e => .error e
+          | .ok dJ =>
+            let (hgs, dJ') := hoistGlobalReads T dJ
+            match decodeDistr T t dJ' with
+            | .error e => .error e
+            | .ok d =>
+              let pre := hgs.map (fun g => EcStmt.load g (hoistedGlobal g.name))
+              let tmp := "#rnd"
+              let draw :=
+                match d.uniformFin with
+                | some h => EcStmt.sample t tmp h.down
+                | none => EcStmt.sampleD t tmp d
+              let split := EcStmt.assignTuple t (items.map (·.name)) (.var t tmp)
+              match (lvTupleStores items).reverse with
+              | [] => .ok (.stmts (pre ++ [draw]) split)
+              | last :: revInit =>
+                .ok (.stmts (pre ++ draw :: split :: revInit.reverse) last)
+      | _ =>
       match decodeLv T lvJ with
       | .error e => .error e
       | .ok (.glob g) =>
@@ -2193,25 +3001,28 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
         match getObj j "distr" with
         | .error e => .error e
         | .ok dJ =>
-          match decodeDistr T g.ty dJ with
+          let (hgs, dJ') := hoistGlobalReads T dJ
+          match decodeDistr T g.ty dJ' with
           | .error e => .error e
           | .ok d =>
+            let pre := hgs.map (fun q => EcStmt.load q (hoistedGlobal q.name))
             let tmp := g.name ++ "#rnd"
             let draw :=
               match d.uniformFin with
               | some h => EcStmt.sample g.ty tmp h.down
               | none => EcStmt.sampleD g.ty tmp d
-            .ok (.stmts [draw] (.store g (.var g.ty tmp)))
+            .ok (.stmts (pre ++ [draw]) (.store g (.var g.ty tmp)))
       | .ok (.loc x t) =>
         match getObj j "distr" with
         | .error e => .error e
         | .ok dJ =>
-          match decodeDistr T t dJ with
+          let (hgs, dJ') := hoistGlobalReads T dJ
+          match decodeDistr T t dJ' with
           | .error e => .error e
           | .ok d =>
             match d.uniformFin with
-            | some h => .ok (.stmt (.sample t x h.down))
-            | none => .ok (.stmt (.sampleD t x d))
+            | some h => .ok (withHoisted hgs (.sample t x h.down))
+            | none => .ok (withHoisted hgs (.sampleD t x d))
   | .ok "Sif" =>
     match getObj j "cond" with
     | .error e => .error e
@@ -2242,14 +3053,29 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
     match getObj j "cond" with
     | .error e => .error e
     | .ok condJ =>
-      match decodeExpr T .bool condJ with
+      let (hgs, condJ') := hoistGlobalReads T condJ
+      match decodeExpr T .bool condJ' with
       | .error e => .error e
       | .ok c =>
         match c.ltGuard with
         | none =>
-          fail s!"while guard in {j.compress}: the only while loop with an image \
-            is the bounded one, whose guard is `i < n` at a program variable `i` \
-            and an integer literal `n`"
+          -- Outside the bounded idiom the loop is the unbounded one, which
+          -- lowers to the limit of its approximants. A guard reading a module
+          -- global is hoisted into a load placed both before the loop and at the
+          -- end of the body, so each iteration tests a value read in that
+          -- iteration rather than one read once before the first.
+          match _hbody : getArr j "body" with
+          | .error e => .error e
+          | .ok bodyA =>
+            match bodyA.toList.attach.mapM (fun ⟨s, _⟩ => decodeItem T s) with
+            | .error e => .error e
+            | .ok items =>
+              match resolveLoops items with
+              | .error e => .error e
+              | .ok body =>
+                match hgs.map (fun g => EcStmt.load g (hoistedGlobal g.name)) with
+                | [] => .ok (.stmt (.whileS c body))
+                | loads => .ok (.stmts loads (.whileS c (body ++ loads)))
         | some (x, n) =>
           if x.stamp.isSome then
             fail s!"the while guard compares the bound identifier '{x.name}': a \
@@ -2294,7 +3120,7 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
           if argsA'.isEmpty && T.modPath ≠ "" && q.startsWith T.modPath then
             .ok (.stmt (.call (lastComponent q)))
           else
-            match List.lookup q T.procSigs with
+            match lookupProcSig T q with
             | some s =>
               match decodeCallArgs T s.res argsA' with
               | .error e => .error e
@@ -2324,12 +3150,23 @@ def decodeItem (T : DecodeTables) (j : Json) : Except String DecodedItem :=
             | .ok [_] =>
               fail s!"tuple lvalue of one component in {lvJ.compress}: the \
                 exporter writes no such node"
-            | .ok ((x, tx) :: rest) =>
-              let t := nestTuple tx (rest.map (·.2))
+            | .ok (i0 :: rest) =>
+              let items := i0 :: rest
+              let t := nestTuple i0.ty (rest.map (·.ty))
               match decodeCallArgs T t argsA' with
               | .error e => .error e
               | .ok ⟨s, arg⟩ =>
-                .ok (withHoisted hargs (.callProcTuple q s arg (x :: rest.map (·.1))))
+                -- The call binds every component to a local; a component the
+                -- source wrote to a global is stored from its local afterwards,
+                -- after whatever loads the arguments' global reads hoisted.
+                let pre := hargs.map (fun g => EcStmt.load g (hoistedGlobal g.name))
+                match (lvTupleStores items).reverse with
+                | [] =>
+                  .ok (withHoisted hargs (.callProcTuple q s arg (items.map (·.name))))
+                | last :: revInit =>
+                  .ok (.stmts
+                    (pre ++ .callProcTuple q s arg (items.map (·.name)) :: revInit.reverse)
+                    last)
           | .ok _ =>
             match decodeLv T lvJ with
             | .error e => .error e
@@ -2536,18 +3373,18 @@ def decodeAliasBody (T : DecodeTables) (name : String) (s : EcSig)
       cross-path: an alias names its target as a module path and a procedure \
       name with a '/' between them"
   | some (mpath, _) =>
-    if mpath.contains '(' then
-      fail s!"procedure '{name}' is an alias of '{target}', a procedure of the \
-        applied functor '{mpath}': an application has no module path of its \
-        own, so no signature registers under one, and the procedure it names \
-        is the functor's body at that argument"
-    else if mpath = T.modPath then
+    -- A target of the form `F(X)./p` resolves through `lookupProcSig`, which
+    -- registers the applied spelling and falls back to the head: a procedure's
+    -- signature is declared by its module's type and not by the modules a
+    -- functor is applied to. The signature-agreement check below is what keeps
+    -- the resolution honest.
+    if mpath = T.modPath then
       fail s!"procedure '{name}' is an alias of '{target}', a procedure of the \
         module the alias sits in: the body would be a call to a procedure of \
         that same module, and a pair of such aliases is a procedure defined as \
         a call to itself"
     else
-      match List.lookup target T.procSigs with
+      match lookupProcSig T target with
       | none =>
         fail s!"procedure '{name}' is an alias of '{target}', whose signature \
           is not in the ingestion's signature table: a functor parameter's \
@@ -2685,7 +3522,50 @@ the module's source name and path. This is the part a concrete module and a
 functor body have in common. -/
 def decodeStructureBody (T : DecodeTables) (baseId : Nat) (name mpath : String)
     (modJ : Json) : Except String DecodedStructure := do
-  let bodyJ ← getObj modJ "body"
+  let bodyJ0 ← getObj modJ "body"
+  let bk0 ← getStr bodyJ0 "kind"
+  -- A module defined as an application of another carries the applied path and
+  -- no body of its own. Applying a functor binds the parameter's prefix in the
+  -- `ProcEnv` rather than rewriting the body, so the image is the target's own
+  -- structure, and the argument names have to be the parameter names for the
+  -- body's calls to land — the reading a nested alias already gets.
+  let bodyJ ←
+    if bk0 = "ME_Alias" then do
+      let tgt ← getStr bodyJ0 "target"
+      let (fpath, args) := splitAliasTarget tgt
+      let ownParams : List String :=
+        match getArr modJ "params" with
+        | .ok pa => pa.toList.filterMap (fun p => (getIdent p "name").toOption)
+        | .error _ => []
+      if ownParams.contains fpath then
+        -- The alias names one of this module's own parameters, which has no body
+        -- of its own: what it denotes is whatever the caller binds there. The
+        -- image is the forwarding module — one procedure per declared name,
+        -- each a call to the target's procedure of that name — which is the
+        -- reading an `FBalias` procedure already has, and which resolves through
+        -- `lookupProcSig`, since the head carries the parameter's module type.
+        let sigA ← getArr modJ "sig"
+        let procs := sigA.map (fun d =>
+          match getStr d "name" with
+          | .ok n =>
+            Json.mkObj
+              [("name", Json.str n),
+               ("sig", (d.getObjVal? "sig").toOption.getD Json.null),
+               ("def", Json.mkObj
+                  [("kind", Json.str "FBalias"),
+                   ("target", Json.str (tgt ++ "./" ++ n))])]
+          | .error _ => d)
+        pure (Json.mkObj
+          [("kind", Json.str "ME_Structure"), ("modules", Json.arr #[]),
+           ("vars", Json.arr #[]), ("procs", Json.arr procs)])
+      else
+        let (ps, fbody) ← aliasedBody T fpath
+        if ps ≠ args then
+          fail s!"module '{name}' is '{tgt}': '{fpath}' takes {ps} and the alias \
+            supplies {args}, and the body's calls name the parameters, so only an \
+            argument under the parameter's own name resolves without renaming them"
+        else pure fbody
+    else pure bodyJ0
   let bk ← getStr bodyJ "kind"
   if bk ≠ "ME_Structure" then
     fail s!"module '{name}' has body kind '{bk}': only ME_Structure has a \
@@ -4161,7 +5041,8 @@ private def jWordAdd : Json :=
         | _ => false)
 
 -- A while loop whose guard is not a comparison of a counter with an integer
--- literal is rejected: nothing bounds the number of iterations.
+-- literal decodes as the unbounded loop: no iteration count is determined, and
+-- none is needed.
 #guard (match decodeStmt ecPrelude
             (Json.mkObj [("kind", Json.str "Swhile"),
                          ("cond", Json.mkObj
@@ -4169,7 +5050,7 @@ private def jWordAdd : Json :=
                             ("path", Json.str "Top.Pervasive.true"),
                             ("targs", Json.arr #[])]),
                          ("body", Json.arr #[])]) with
-        | .error _ => true
+        | .ok (.whileS _ []) => true
         | _ => false)
 
 -- A node the exporter marked as outside its coverage is rejected.
@@ -4316,6 +5197,21 @@ private def jTyApp1 (p : String) (a : Json) : Json :=
 #guard (match decodeTy (ecPrelude.withOpaqueType "Top.t")
             (jTyApp1 "Top.List.list" (jTyConstr "Top.t")) with
         | .ok (.list (.opaque "Top.t")) => true
+        | _ => false)
+
+-- The spelling a theory writes for its own declaration decodes at the same code
+-- as the one its clients write.
+#guard (match decodeTy ecPrelude (jTyApp1 "Top.option" jBool) with
+        | .ok (.option .bool) => true
+        | _ => false)
+
+#guard (match decodeTy ecPrelude (jTyApp1 "Top.list" jInt) with
+        | .ok (.list .int) => true
+        | _ => false)
+
+-- An array decodes at the list code, the image of `Array.ec`'s own bijection.
+#guard (match decodeTy ecPrelude (jTyApp1 "Top.Array.array" jBool) with
+        | .ok (.list .bool) => true
         | _ => false)
 
 -- An option type constructor at two type arguments is rejected: the code is
@@ -5697,8 +6593,8 @@ private def jSampleFrom (ty : Json) (d : Json) : Json :=
         | .error _ => true
         | _ => false)
 
--- `dlist` is the rejected two-argument operator; `dlet`, checked above at the
--- same shape, is the accepted one.
+-- `dlist` takes a count, so it is rejected at a function second argument;
+-- `dlet`, checked above at this shape, is the operator that takes one.
 #guard (match decodeStmt ecPrelude
             (jSampleFrom jBool
               (jDistrApp jBool "Top.DList.dlist"
@@ -5750,13 +6646,78 @@ private def jSampleFrom (ty : Json) (d : Json) : Json :=
         | .error _ => true
         | _ => false)
 
--- A function argument that is not a lambda is rejected, so a predicate given by
--- an operator does not decode to some predicate the AST can express.
+-- A function argument that is neither a lambda nor a node at a function type is
+-- rejected, so a predicate given by an operator at the carrier's own code does
+-- not decode to some predicate the AST can express.
 #guard (match decodeStmt ecPrelude
             (jSampleFrom jBool
               (jDistrApp jBool "Top.Distr.DConditional.dcond"
                 #[jDistrOp jBool "Top.DBool.dbool",
                   Json.mkObj [("ty", jBool), ("kind", Json.str "Eop"),
+                              ("path", Json.str "Top.Pervasive.idfun"),
+                              ("targs", Json.arr #[])]])) with
+        | .error _ => true
+        | _ => false)
+
+-- An unapplied operator at a function type decodes through its eta-expansion:
+-- the binder is the one `etaBinderName` names and the body is the operator
+-- applied to a read of it.
+#guard (match decodeStmt ecPrelude
+            (jSampleFrom jBool
+              (jDistrApp jBool "Top.Distr.DConditional.dcond"
+                #[jDistrOp jBool "Top.DBool.dbool",
+                  Json.mkObj [("ty", jTyArrow jBool jBool),
+                              ("kind", Json.str "Eop"),
+                              ("path", Json.str "Top.Pervasive.[!]"),
+                              ("targs", Json.arr #[])]])) with
+        | .ok (.sampleD .bool "x" (.cond (.uniform _ _) v (.bnot (.var .bool w)))) =>
+          v == ({ name := etaBinderName, stamp := some 0 } : EcVarId) && v == w
+        | _ => false)
+
+-- An operator applied to fewer arguments than its declaration takes decodes the
+-- same way, with the binder appended to the arguments the node carries. This is
+-- the shape `d \ (mem X)` is exported at.
+#guard (match decodeStmt ecPrelude
+            (jSampleFrom jBool
+              (jDistrApp jBool "Top.Dexcepted.\\"
+                #[jDistrOp jBool "Top.DBool.dbool",
+                  Json.mkObj
+                    [("ty", jTyArrow jBool jBool), ("kind", Json.str "Eapp"),
+                     ("f", Json.mkObj
+                       [("ty", jTyArrow jBool (jTyArrow jBool jBool)),
+                        ("kind", Json.str "Eop"),
+                        ("path", Json.str "Top.Pervasive.="),
+                        ("targs", Json.arr #[jBool])]),
+                     ("args", Json.arr #[jLocalBool "y"])]])) with
+        | .ok (.sampleD .bool "x"
+                 (.cond (.uniform _ _) v (.bnot (.beq (.var .bool y) (.var .bool w))))) =>
+          v == ({ name := etaBinderName, stamp := some 0 } : EcVarId) && v == w &&
+            y == EcVarId.ofName "y"
+        | _ => false)
+
+-- A function argument at a function type whose head is not an operator is
+-- rejected: the AST has no higher-order application, so there is nothing for the
+-- eta-expansion to apply.
+#guard (match decodeStmt ecPrelude
+            (jSampleFrom jBool
+              (jDistrApp jBool "Top.Distr.DConditional.dcond"
+                #[jDistrOp jBool "Top.DBool.dbool",
+                  Json.mkObj [("ty", jTyArrow jBool jBool),
+                              ("kind", Json.str "Evar"),
+                              ("pv", Json.mkObj
+                                [("kind", Json.str "PVloc"),
+                                 ("name", Json.str "p")])]])) with
+        | .error _ => true
+        | _ => false)
+
+-- An operator at a function type that the tables do not hold is rejected, so the
+-- eta-expansion commits to no meaning of its own.
+#guard (match decodeStmt ecPrelude
+            (jSampleFrom jBool
+              (jDistrApp jBool "Top.Distr.DConditional.dcond"
+                #[jDistrOp jBool "Top.DBool.dbool",
+                  Json.mkObj [("ty", jTyArrow jBool jBool),
+                              ("kind", Json.str "Eop"),
                               ("path", Json.str "Top.Pervasive.idfun"),
                               ("targs", Json.arr #[])]])) with
         | .error _ => true
@@ -6090,10 +7051,10 @@ private def loopsExport : Json :=
             && litIsInt zero 0 && litIsInt one 1
         | _ => false)
 
--- A guard whose bound is a program variable is rejected: the iteration count is
--- not determined.
+-- A guard whose bound is a program variable determines no iteration count, so it
+-- decodes as the unbounded loop rather than the bounded one.
 #guard (match importGame ecPrelude "VarBound" loopsExport with
-        | .error _ => true
+        | .ok _ => true
         | _ => false)
 
 -- A loop whose preceding statement is not an integer assignment is rejected.
@@ -6122,10 +7083,10 @@ private def loopsExport : Json :=
         | .error _ => true
         | _ => false)
 
--- A guard under `<=` is rejected: `i <= n` runs one iteration more than `i < n`,
--- and the recognised guard is the strict one.
+-- `i <= n` runs one iteration more than the recognised `i < n`, so it is not the
+-- bounded idiom and decodes as the unbounded loop.
 #guard (match importGame ecPrelude "LeGuard" loopsExport with
-        | .error _ => true
+        | .ok _ => true
         | _ => false)
 
 -- A body containing an argument-free call is rejected: the call site names
@@ -6288,14 +7249,15 @@ private def aeadTables : DecodeTables :=
            | _ => false)
         | _ => false)
 
--- An alias to a procedure of an applied functor is rejected, naming the
+-- An alias to a procedure of an applied functor whose signature is registered
+-- nowhere is rejected at the lookup, naming the
 -- application.
 #guard (match decodeProc ecPrelude
             (jProc "init" (jSigDef #[] jUnit jUnit)
               (jFBalias "Top.SetLog.Log(O)./init")) with
         | .error m =>
           m.startsWith "ec-import: procedure 'init' is an alias of \
-            'Top.SetLog.Log(O)./init', a procedure of the applied functor"
+            'Top.SetLog.Log(O)./init', whose signature"
         | _ => false)
 
 -- An alias to a procedure of the module the alias sits in is rejected, even
@@ -6429,7 +7391,7 @@ private def jSasgnTuple (items : Array Json) (rhs : Json) : Json :=
             ["x", "y", "z"] _)) => true
         | _ => false)
 
--- A tuple lvalue with a global component is rejected, naming the component.
+-- A tuple lvalue at a global the ingestion does not know is rejected, naming it.
 #guard (match decodeItem ecPrelude
             (jSasgnTuple
               #[jLvItem "x" jInt,
@@ -6438,7 +7400,22 @@ private def jSasgnTuple (items : Array Json) (rhs : Json) : Json :=
                             ("ty", jBool)]]
               (jLocalAt (jTyProd jInt jBool) "p")) with
         | .error m =>
-          m.startsWith "ec-import: tuple lvalue component of kind 'PVglob'"
+          m.startsWith "ec-import: tuple lvalue component at the unknown global"
+        | _ => false)
+
+-- A global component binds a local and is stored from it after the
+-- destructuring, so the source's write to the heap cell happens.
+#guard (match decodeItem (ecPrelude.withGlobal { name := "Top.M./g", id := 0, ty := .bool })
+            (jSasgnTuple
+              #[jLvItem "x" jInt,
+                Json.mkObj [("pv", Json.mkObj [("kind", Json.str "PVglob"),
+                              ("xpath", Json.str "Top.M./g")]),
+                            ("ty", jBool)]]
+              (jLocalAt (jTyProd jInt jBool) "p")) with
+        | .ok (.stmts [.assignTuple (.prod .int .bool) [_, y] _] (.store g e)) =>
+          g.name == "Top.M./g" && g.ty == EcTy.bool
+            && y == hoistedGlobal "Top.M./g"
+            && e.varName == some (EcVarId.ofName (hoistedGlobal "Top.M./g"))
         | _ => false)
 
 -- The composed shape `(pk, sk) <@ S./kg()`: the call's result destructures at
@@ -6510,6 +7487,21 @@ private def jNullOp (p : String) (ty : Json) : Json :=
            | none => false)
         | _ => false)
 
+-- and at the root spelling `Logic.ec`'s own export writes.
+#guard (match decodeExpr ecPrelude (.option .bool)
+            (jNullOp "Top.None" (jTyApp1 "Top.option" jBool)) with
+        | .ok e =>
+          (match e.litValue with
+           | some v => v == EcTy.noneVal (a := .bool)
+           | none => false)
+        | _ => false)
+
+-- A path that is neither spelling is not the absent value.
+#guard (match decodeExpr ecPrelude (.option .bool)
+            (jNullOp "Top.Logic.NoneOf" (jTyApp1 "Top.option" jBool)) with
+        | .error _ => true
+        | _ => false)
+
 -- `witness` decodes as the canonical inhabitant of the context's code.
 #guard (match decodeExpr ecPrelude .int
             (jNullOp "Top.Pervasive.witness" jInt) with
@@ -6521,6 +7513,20 @@ private def jNullOp (p : String) (ty : Json) : Json :=
             (jOpApp (jTyApp1 "Top.Logic.option" jBool) "Top.Logic.Some"
               #[jLocalBool "x"]) with
         | .ok (.someE e) => e.varName == some (EcVarId.ofName "x")
+        | _ => false)
+
+-- and at the root spelling `Logic.ec`'s own export writes.
+#guard (match decodeExpr ecPrelude (.option .bool)
+            (jOpApp (jTyApp1 "Top.option" jBool) "Top.Some"
+              #[jLocalBool "x"]) with
+        | .ok (.someE e) => e.varName == some (EcVarId.ofName "x")
+        | _ => false)
+
+-- A path that is neither spelling is not the present value.
+#guard (match decodeExpr ecPrelude (.option .bool)
+            (jOpApp (jTyApp1 "Top.option" jBool) "Top.SomeOf"
+              #[jLocalBool "x"]) with
+        | .error _ => true
         | _ => false)
 
 -- The list literal `1 :: []` decodes as cons of the literal onto the empty
@@ -6558,8 +7564,93 @@ private def jNullOp (p : String) (ty : Json) : Json :=
           litIsInt d 0 && l.varName == some (EcVarId.ofName "l") && litIsInt i 1
         | _ => false)
 
+-- `head` decodes at the element code, with the default first.
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.List.head"
+              #[jIntLit "0", jLocalAt jListInt "l"]) with
+        | .ok (.listHead z l) =>
+          litIsInt z 0 && l.varName == some (EcVarId.ofName "l")
+        | _ => false)
+
+-- and at the root spelling `List.ec`'s own export writes.
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.head" #[jIntLit "0", jLocalAt jListInt "l"]) with
+        | .ok (.listHead _ _) => true
+        | _ => false)
+
+-- It is rejected at the wrong arity, rather than read at a shorter one.
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.List.head" #[jLocalAt jListInt "l"]) with
+        | .error _ => true
+        | _ => false)
+
+-- and where the list's element code is not the context's code.
+#guard (match decodeExpr ecPrelude .bool
+            (jOpApp jBool "Top.List.head"
+              #[jLocalBool "d", jLocalAt jListInt "l"]) with
+        | .error _ => true
+        | _ => false)
+
+/-- The type node of an array of integers. -/
+private def jArrInt : Json := jTyApp1 "Top.Array.array" jInt
+
+-- The array read decodes as `nth witness`, the definition `Array.ec` gives it.
+#guard (match decodeExpr ecPrelude .int
+            (jOpApp jInt "Top.Array._.[_]"
+              #[jLocalAt jArrInt "a", jIntLit "2"]) with
+        | .ok (.listNth d l i) =>
+          litIsInt d 0 && l.varName == some (EcVarId.ofName "a") && litIsInt i 2
+        | _ => false)
+
+-- and is rejected where the first argument is not an array.
+#guard (match decodeExpr ecPrelude .bool
+            (jOpApp jBool "Top.Array._.[_]"
+              #[jLocalBool "b", jIntLit "2"]) with
+        | .error _ => true
+        | _ => false)
+
+/-- The type node of a finite set of integers. -/
+private def jFsetInt : Json := jTyApp1 "Top.FSet.fset" jInt
+
+-- `fdom` decodes as the set of keys, at the set code over the map's key code.
+#guard (match decodeExpr ecPrelude (.fset .int)
+            (jOpApp jFsetInt "Top.FMap.fdom" #[jLocalMap "m"]) with
+        | .ok (.mapFdom m) => m.varName == some (EcVarId.ofName "m")
+        | _ => false)
+
+-- and is rejected at a set code over any other element code.
+#guard (match decodeExpr ecPrelude (.fset .bool)
+            (jOpApp (jTyApp1 "Top.FSet.fset" jBool) "Top.FMap.fdom"
+              #[jLocalMap "m"]) with
+        | .error _ => true
+        | _ => false)
+
+-- `rng` decodes at the boolean code, over the map and the value tested.
+#guard (match decodeExpr ecPrelude .bool
+            (jOpApp jBool "Top.FMap.rng" #[jLocalMap "m", jLocalBool "y"]) with
+        | .ok (.mapRng m y) =>
+          m.varName == some (EcVarId.ofName "m")
+            && y.varName == some (EcVarId.ofName "y")
+        | _ => false)
+
+-- and is rejected where the first argument is not a finite map.
+#guard (match decodeExpr ecPrelude .bool
+            (jOpApp jBool "Top.FMap.rng"
+              #[jLocalAt jListInt "l", jIntLit "1"]) with
+        | .error _ => true
+        | _ => false)
+
 /-- The type node of a distribution over booleans. -/
 private def jDistrBool : Json := jTyApp1 "Top.Distr.distr" jBool
+
+-- `rng` is rejected where the map's value type has no decidable equality, since
+-- the range test compares values.
+#guard (match decodeExpr ecPrelude .bool
+            (jOpApp jBool "Top.FMap.rng"
+              #[jLocalAt (jTyApp "Top.FMap.fmap" jInt jDistrBool) "m",
+                jLocalAt jDistrBool "d"]) with
+        | .error _ => true
+        | _ => false)
 
 -- The distribution type constructor decodes at the `distr` code, which is
 -- outside `hasEq` and outside `isFin`.

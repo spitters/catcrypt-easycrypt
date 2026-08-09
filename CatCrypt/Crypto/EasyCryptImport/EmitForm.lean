@@ -64,10 +64,10 @@ Each is an `Except` error naming the node, and each names why.
   a position where the shallow reading and the form disagree about scope.
 * **`EcTerm.ofExpr`**: its image is `evalExpr` of a program expression against
   the local valuation, which is a second printer over `Ast.lean`.
-* **`EcTerm.mapMem`, `EcTerm.listMem` and `EcTerm.fsetMem`**: each reads its
-  code's decidable equality, and the value it takes at a code without one is not
-  the operation, so the text would state the operation at codes where the term
-  does not.
+* **`EcTerm.mapMem`, `EcTerm.mapFind`, `EcTerm.listMem` and `EcTerm.fsetMem`**:
+  each reads its code's decidable equality, and the value it takes at a code
+  without one is not the operation, so the text would state the operation at
+  codes where the term does not.
 * **A procedure whose path the caller did not name** (`ShallowCtx.procNames`):
   the resolution environment is caller-supplied, so the text for `A.guess` or
   `Exp0(A).main` is the caller's to give. The equation's `rfl` is what checks the
@@ -333,6 +333,9 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
   | _, .listCons x l, C => do
     let a ← emitShallowTerm x C; let b ← emitShallowTerm l C
     .ok s!"(EcTy.listCons {a} {b})"
+  | _, .listCat l₁ l₂, C => do
+    let a ← emitShallowTerm l₁ C; let b ← emitShallowTerm l₂ C
+    .ok s!"(EcTy.listCat {a} {b})"
   | _, .listSize l, C => do
     let a ← emitShallowTerm l C; .ok s!"(EcTy.listSize {a})"
   | _, .iter n f x, C => do
@@ -351,6 +354,28 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
   | _, .optionGetD o d, C => do
     let a ← emitShallowTerm o C; let b ← emitShallowTerm d C
     .ok s!"(EcTy.optionGetD {a} {b})"
+  | _, .optionMap f o, C => do
+    let g ← emitShallowTerm f C; let a ← emitShallowTerm o C
+    .ok s!"(EcTy.optionMap {g} {a})"
+  | _, .support d x, C => do
+    let a ← emitShallowTerm d C; let b ← emitShallowTerm x C
+    .ok s!"(EcTy.support {a} {b})"
+  | _, .distrMap d f, C => do
+    let a ← emitShallowTerm d C; let g ← emitShallowTerm f C
+    .ok s!"(EcTy.distrMap {a} {g})"
+  | _, .distrLet d f, C => do
+    let a ← emitShallowTerm d C; let g ← emitShallowTerm f C
+    .ok s!"(EcTy.distrLet {a} {g})"
+  | _, .distrProd d₁ d₂, C => do
+    let a ← emitShallowTerm d₁ C; let b ← emitShallowTerm d₂ C
+    .ok s!"(EcTy.distrProd {a} {b})"
+  | _, .distrExcept d p, C => do
+    let a ← emitShallowTerm d C; let q ← emitShallowTerm p C
+    .ok s!"(EcTy.distrExcept {a} {q})"
+  | _, .toSeq p, C => do
+    let q ← emitShallowTerm p C
+    .ok s!"(EcTy.toSeq {q})"
+  | _, .finiteType a, _ => .ok s!"(EcTy.finiteType {emitTy a})"
   | _, .listUniq _, _ =>
     fail "a list repetition test in a statement: its value is the test at the \
       element code's decidable equality, which this printer does not render"
@@ -373,9 +398,16 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
   | _, .listCount p l, C => do
     let q ← emitShallowTerm p C; let s ← emitShallowTerm l C
     .ok s!"(EcTy.listCount {q} {s})"
+  | _, .mapSet m k v, C => do
+    let a ← emitShallowTerm m C; let b ← emitShallowTerm k C
+    let c ← emitShallowTerm v C
+    .ok s!"(EcTy.mapSet {a} {b} {c})"
   | _, .mapMem _ _, _ =>
     fail "a finite-map membership test in a statement: its value is the test at \
       the key code's decidable equality, which this printer does not render"
+  | _, .mapFind _ _, _ =>
+    fail "a finite-map lookup in a statement: its value is the search at the key \
+      code's decidable equality, which this printer does not render"
   | _, .listMem _ _, _ =>
     fail "a list membership test in a statement: its value is the test at the \
       element code's decidable equality, which this printer does not render"
@@ -388,6 +420,14 @@ def emitShallowTerm : {t : EcTy} → EcTerm t → ShallowCtx → Except String S
   | _, .letIn _ _ _, _ =>
     fail "a let term in a statement: the shallow reading binds a value, which \
       this printer does not render"
+  | _, .forallB _ _ _, _ =>
+    fail "a universally quantified term in a statement: its value is the \
+      classical decision of a quantified proposition, which this printer does \
+      not render"
+  | _, .existsB _ _ _, _ =>
+    fail "an existentially quantified term in a statement: its value is the \
+      classical decision of a quantified proposition, which this printer does \
+      not render"
 
 /-! ## Whether the probability shape forces the rewrite
 
@@ -414,6 +454,8 @@ def shallowNeedsPrTrue : EcForm → Bool
   | .allModRestr _ _ _ body => shallowNeedsPrTrue body
   | .allModOn _ _ body => shallowNeedsPrTrue body
   | .allModRestrOn _ _ _ body => shallowNeedsPrTrue body
+  | .allModRestrOf _ _ _ body => shallowNeedsPrTrue body
+  | .allModRestrOfOn _ _ _ body => shallowNeedsPrTrue body
   | .allOp _ _ body => shallowNeedsPrTrue body
   | .allConst _ _ body => shallowNeedsPrTrue body
   | .probCmp _ a b => shallowProbNeedsPrTrue a || shallowProbNeedsPrTrue b
@@ -425,11 +467,28 @@ def shallowProbNeedsPrTrue : EcProb → Bool
   | .pr _ _ _ _ _ => false
   | .const _ => false
   | .pvar _ => false
+  | .mu _ _ => false
   | .add a b => shallowProbNeedsPrTrue a || shallowProbNeedsPrTrue b
   | .mul a b => shallowProbNeedsPrTrue a || shallowProbNeedsPrTrue b
   | .absDiff a b => shallowProbNeedsPrTrue a || shallowProbNeedsPrTrue b
 
 end
+
+/-! ## The footprint a restriction names -/
+
+/-- The text of the footprint a module restriction names: the declared globals of
+the concrete modules it names, unioned with the footprint identifier of each
+module binder it names. The union is left-nested in the order the restriction
+lists its binders, which is the order `FormEnv.restrLocs` folds them in. -/
+def emitRestrLocs (r : EcModRestr) (C : ShallowCtx) : Except String String :=
+  let gsText := String.intercalate ", " (r.globals.map emitGlobal)
+  r.binders.foldlM (fun acc nm =>
+      match List.lookup nm C.footprints with
+      | some L => .ok s!"({acc} ∪ {L})"
+      | none =>
+        fail s!"a restriction against '{nm}', where no binder in scope carries \
+          the module's footprint")
+    s!"(globLocs [{gsText}])"
 
 /-! ## Formulas and probabilities
 
@@ -539,6 +598,24 @@ def emitShallowForm (holes : Bool) : EcForm → ShallowCtx → Except String Str
        .ok s!"∀ ({m} : ModuleImpl {I}) ({L} : LocSet), \
          Disjoint {L} (globLocs [{gsText}]) → ModuleRespectsOn {L} {m} → \
          ModuleRespectsLocs (globLocs [{gsText}]) {m} → {b}"
+  | .allModRestrOf nm _ r body, C =>
+    let (m, C') := C.fresh nm
+    let C'' := { C' with mods := (nm, m) :: C'.mods }
+    do let I ← C.interfaceText nm
+       let fp ← emitRestrLocs r C
+       let b ← emitShallowForm holes body C''
+       .ok s!"∀ {m} : ModuleImpl {I}, ModuleRespectsLocs {fp} {m} → {b}"
+  | .allModRestrOfOn nm _ r body, C =>
+    let (m, C') := C.fresh nm
+    let (L, C'') := C'.fresh "L"
+    let C₃ := { C'' with mods := (nm, m) :: C''.mods,
+                         footprints := (nm, L) :: C''.footprints }
+    do let I ← C.interfaceText nm
+       let fp ← emitRestrLocs r C
+       let b ← emitShallowForm holes body C₃
+       .ok s!"∀ ({m} : ModuleImpl {I}) ({L} : LocSet), \
+         Disjoint {L} {fp} → ModuleRespectsOn {L} {m} → \
+         ModuleRespectsLocs {fp} {m} → {b}"
   | .allOp path s body, C =>
     let (nm, C') := C.fresh (shallowLastName path)
     let C'' := { C' with ops := (path, nm) :: C'.ops }
@@ -625,6 +702,9 @@ def emitShallowProb : EcProb → ShallowCtx → Except String String
     | some nm => .ok nm
     | none => fail s!"the probability parameter '{x}' is read where no quantifier \
         binds it"
+  | .mu d p, C => do
+    let x ← emitShallowTerm d C; let q ← emitShallowTerm p C
+    .ok s!"(EcTy.mu {x} {q})"
   | .add a b, C => do
     let x ← emitShallowProb a C; let y ← emitShallowProb b C; .ok s!"({x} + {y})"
   | .mul a b, C => do
@@ -833,6 +913,50 @@ private def chkExpCtx : ShallowCtx where
       A → pRHL (fun h₁ h₂ => agreeOn L h₁ h₂) (expImpl A false) \
       (expImpl A true) (fun r₁ _ r₂ _ => r₁ = r₂)"
 
+/-- A context in which the module binder `A` already carries its footprint, which
+is what a restriction against `A` is stated against. -/
+private def chkFootprintCtx : ShallowCtx where
+  interfaces := [("S", "advInterface")]
+  footprints := [("A", "LA")]
+
+-- A restriction against a module binder in scope is stated against the footprint
+-- that binder carries.
+#guard emitShallowForm false
+    (.allModRestrOf "S" chkAdvInterface { globals := [], binders := ["A"] } .tru)
+    chkFootprintCtx
+  == .ok "∀ S : ModuleImpl advInterface, \
+      ModuleRespectsLocs ((globLocs []) ∪ LA) S → True"
+
+-- A restriction naming a concrete module and a binder together is stated against
+-- the union of the two footprints, and the binder that carries its own footprint
+-- takes it disjoint from that union.
+#guard emitShallowForm false
+    (.allModRestrOfOn "S" chkAdvInterface
+      { globals := [chkKGlobal], binders := ["A"] }
+      (.memEqOnMod "S" (.side .left) (.side .right))) chkFootprintCtx
+  == .ok "∀ (S : ModuleImpl advInterface) (L : LocSet), Disjoint L ((globLocs \
+      [(EcGlobal.mk \"Top.Otp./k\" 0 EcTy.bool)]) ∪ LA) → ModuleRespectsOn L S → \
+      ModuleRespectsLocs ((globLocs [(EcGlobal.mk \"Top.Otp./k\" 0 EcTy.bool)]) \
+      ∪ LA) S → agreeOn L h₁ h₂"
+
+-- The enclosing binder is what supplies the footprint, so the two quantifiers
+-- print together.
+#guard emitShallowForm false
+    (.allModRestrOn "A" chkAdvInterface [chkKGlobal]
+      (.allModRestrOf "S" chkAdvInterface { globals := [], binders := ["A"] } .tru))
+    { interfaces := [("A", "advInterface"), ("S", "advInterface")] }
+  == .ok "∀ (A : ModuleImpl advInterface) (L : LocSet), Disjoint L (globLocs \
+      [(EcGlobal.mk \"Top.Otp./k\" 0 EcTy.bool)]) → ModuleRespectsOn L A → \
+      ModuleRespectsLocs (globLocs [(EcGlobal.mk \"Top.Otp./k\" 0 EcTy.bool)]) \
+      A → ∀ S : ModuleImpl advInterface, \
+      ModuleRespectsLocs ((globLocs []) ∪ L) S → True"
+
+-- A restriction against a binder no enclosing quantifier gives a footprint has
+-- no printed image.
+#guard (emitShallowForm false
+    (.allModRestrOf "S" chkAdvInterface { globals := [], binders := ["A"] } .tru)
+    { interfaces := [("S", "advInterface")] }).toOption.isNone
+
 -- `islossless A.guess` reads the procedure the caller named.
 #guard emitShallowForm false (.lossless "A./guess" ⟨.bool, .bool⟩) chkExpCtx
   == .ok "ProcLossless (A.proc \"guess\")"
@@ -900,6 +1024,31 @@ private def chkExpCtx : ShallowCtx where
 #guard emitShallowForm false
     (.allTy .bool "b" (.allTy .bool "b" (.eqT (.var .bool "b") (.var .bool "b")))) {}
   == .ok "∀ b : EcTy.bool.interp, ∀ b1 : EcTy.bool.interp, b1 = b1"
+
+-- Catenation, the independent product of two distributions and the conditioned
+-- distribution print as the operations they denote.
+#guard emitShallowTerm
+    (.listCat (a := .int) (.var (.list .int) "l") (.var (.list .int) "m"))
+    { locals := [("l", "l"), ("m", "m")] } == .ok "(EcTy.listCat l m)"
+#guard emitShallowTerm
+    (.distrProd (a := .int) (b := .int)
+      (.var (.distr .int) "d") (.var (.distr .int) "e"))
+    { locals := [("d", "d"), ("e", "e")] } == .ok "(EcTy.distrProd d e)"
+#guard emitShallowTerm
+    (.distrExcept (a := .int)
+      (.var (.distr .int) "d") (.var (.arrow .int .bool) "p"))
+    { locals := [("d", "d"), ("p", "p")] } == .ok "(EcTy.distrExcept d p)"
+
+-- A quantifier in term position has no printed reading: its value is the
+-- classical decision of a quantified proposition.
+#guard (match emitShallowTerm (.forallB .int "x" (.var .bool "b"))
+            { locals := [("b", "b")] } with
+        | .error m => m.startsWith "ec-import: a universally quantified term"
+        | _ => false)
+#guard (match emitShallowTerm (.existsB .int "x" (.var .bool "b"))
+            { locals := [("b", "b")] } with
+        | .error m => m.startsWith "ec-import: an existentially quantified term"
+        | _ => false)
 
 end Check
 

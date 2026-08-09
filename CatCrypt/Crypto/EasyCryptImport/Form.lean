@@ -20,9 +20,9 @@ The syntax is three layers, mirroring EasyCrypt's `form`:
   variables, literals, a module global read at a memory (`g{&m}`), the result of
   the enclosing judgement (`res`), the operators of `Ast.lean`'s expression
   fragment, an application of an abstract operator (`opApp`), a function applied
-  to an argument (`app`), `if`, and `let`. An `EcExpr` embeds directly
-  (`ofExpr`). There is no lambda: a function reaches a statement as a quantified
-  logical variable at an `EcTy.arrow` code and is consumed by `app`.
+  to an argument (`app`) or built by a lambda (`lam`), a quantified proposition
+  at the `bool` code (`forallB`, `existsB`), `if`, and `let`. An `EcExpr` embeds
+  directly (`ofExpr`).
 * `EcProb` — the probability layer: `Pr[q(arg) @ &m : ev]`, constants, a
   probability-valued parameter, sum, product, and absolute difference.
 * `EcForm` — the formula layer: the first-order skeleton (the connectives,
@@ -318,8 +318,17 @@ inductive EcTerm : EcTy → Type where
   | intLe (a b : EcTerm .int) : EcTerm .bool
   /-- Whether a key is bound in a finite map, EasyCrypt's `dom`. -/
   | mapMem {a b : EcTy} (m : EcTerm (.map a b)) (k : EcTerm a) : EcTerm .bool
+  /-- The binding of a key in a finite map, EasyCrypt's `m.[k]`: the value at
+  the option code, absent where the key is unbound. -/
+  | mapFind {a b : EcTy} (m : EcTerm (.map a b)) (k : EcTerm a) :
+      EcTerm (.option b)
+  /-- A finite map with a key bound to a value, EasyCrypt's `m.[k <- v]`. -/
+  | mapSet {a b : EcTy} (m : EcTerm (.map a b)) (k : EcTerm a) (v : EcTerm b) :
+      EcTerm (.map a b)
   /-- List cons, EasyCrypt's `::`. -/
   | listCons {a : EcTy} (x : EcTerm a) (l : EcTerm (.list a)) : EcTerm (.list a)
+  /-- Catenation of two lists, EasyCrypt's `++`. -/
+  | listCat {a : EcTy} (l₁ l₂ : EcTerm (.list a)) : EcTerm (.list a)
   /-- The length of a list as an integer, EasyCrypt's `size`. -/
   | listSize {a : EcTy} (l : EcTerm (.list a)) : EcTerm .int
   /-- Membership in a list, EasyCrypt's `mem`. -/
@@ -339,6 +348,9 @@ inductive EcTerm : EcTy → Type where
   /-- The value an option carries, or a default, EasyCrypt's `odflt`. `oget` is
   this at the code's canonical inhabitant. -/
   | optionGetD {a : EcTy} (o : EcTerm (.option a)) (d : EcTerm a) : EcTerm a
+  /-- The image of an option under a function, EasyCrypt's `omap`. -/
+  | optionMap {a b : EcTy} (f : EcTerm (.arrow a b)) (o : EcTerm (.option a)) :
+      EcTerm (.option b)
   /-- Whether a list repeats no element, EasyCrypt's `uniq`. -/
   | listUniq {a : EcTy} (l : EcTerm (.list a)) : EcTerm .bool
   /-- The image of a list under a function, EasyCrypt's `map`. -/
@@ -361,10 +373,47 @@ inductive EcTerm : EcTy → Type where
       EcTerm .int
   /-- Membership in a finite set, EasyCrypt's `mem`. -/
   | fsetMem {a : EcTy} (s : EcTerm (.fset a)) (x : EcTerm a) : EcTerm .bool
+  /-- Whether a value has nonzero mass in a distribution, EasyCrypt's
+  `support d x`. -/
+  | support {a : EcTy} (d : EcTerm (.distr a)) (x : EcTerm a) : EcTerm .bool
+  /-- The pushforward of a distribution along a function, EasyCrypt's
+  `dmap d f`. -/
+  | distrMap {a b : EcTy} (d : EcTerm (.distr a)) (f : EcTerm (.arrow a b)) :
+      EcTerm (.distr b)
+  /-- The bind of a distribution with a distribution-valued function,
+  EasyCrypt's `dlet d f`. -/
+  | distrLet {a b : EcTy} (d : EcTerm (.distr a))
+      (f : EcTerm (.arrow a (.distr b))) : EcTerm (.distr b)
+  /-- The independent product of two distributions, EasyCrypt's `` d₁ `*` d₂ ``:
+  a pair whose components are drawn from the two factors. -/
+  | distrProd {a b : EcTy} (d₁ : EcTerm (.distr a)) (d₂ : EcTerm (.distr b)) :
+      EcTerm (.distr (.prod a b))
+  /-- A distribution conditioned on avoiding a predicate, EasyCrypt's `d \ p`. -/
+  | distrExcept {a : EcTy} (d : EcTerm (.distr a))
+      (p : EcTerm (.arrow a .bool)) : EcTerm (.distr a)
+  /-- The values a predicate holds of, as a duplicate-free list, EasyCrypt's
+  `to_seq p`. -/
+  | toSeq {a : EcTy} (p : EcTerm (.arrow a .bool)) : EcTerm (.list a)
+  /-- Whether the carrier of a type code is enumerated by some duplicate-free
+  list, EasyCrypt's `finite_type <:a>`. The code is a field rather than an index
+  because the operator is nullary: the read site fixes it by the operator's type
+  argument, and the term's own code is `bool`. -/
+  | finiteType (a : EcTy) : EcTerm .bool
   /-- A conditional term. -/
   | ite {t : EcTy} (c : EcTerm .bool) (thn els : EcTerm t) : EcTerm t
   /-- A `let` binding of a logical variable. -/
   | letIn {t' t : EcTy} (x : String) (v : EcTerm t') (body : EcTerm t) : EcTerm t
+  /-- EasyCrypt's `forall (x : a), b` where a term is expected: the proposition
+  that `body` holds of every value of the code `a`, as a `bool`. EasyCrypt's
+  propositions live at `bool`, so a quantifier stands wherever a boolean term
+  does — under a conjunction, as an operator argument, or as the whole body of a
+  predicate definition. The binder is carried, and `body` reads it through
+  `var`; the reading is the classical decision of the quantified proposition,
+  which is how `choiceb` and `support` are already read. -/
+  | forallB (a : EcTy) (x : String) (body : EcTerm .bool) : EcTerm .bool
+  /-- EasyCrypt's `exists (x : a), b` where a term is expected, read as
+  `forallB` is. -/
+  | existsB (a : EcTy) (x : String) (body : EcTerm .bool) : EcTerm .bool
 
 /-! ### Leaf recognizers
 
@@ -456,7 +505,10 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
   | _, .intGcd a b => EcTerm.opsOf a ++ EcTerm.opsOf b
   | _, .intLe a b => EcTerm.opsOf a ++ EcTerm.opsOf b
   | _, .mapMem m k => EcTerm.opsOf m ++ EcTerm.opsOf k
+  | _, .mapFind m k => EcTerm.opsOf m ++ EcTerm.opsOf k
+  | _, .mapSet m k v => EcTerm.opsOf m ++ EcTerm.opsOf k ++ EcTerm.opsOf v
   | _, .listCons x l => EcTerm.opsOf x ++ EcTerm.opsOf l
+  | _, .listCat l₁ l₂ => EcTerm.opsOf l₁ ++ EcTerm.opsOf l₂
   | _, .listSize l => EcTerm.opsOf l
   | _, .listMem l x => EcTerm.opsOf l ++ EcTerm.opsOf x
   | _, .choiceb p x0 => EcTerm.opsOf p ++ EcTerm.opsOf x0
@@ -465,6 +517,7 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
       EcTerm.opsOf n ++ EcTerm.opsOf opr ++ EcTerm.opsOf x ++ EcTerm.opsOf z
   | _, .someT x => EcTerm.opsOf x
   | _, .optionGetD o d => EcTerm.opsOf o ++ EcTerm.opsOf d
+  | _, .optionMap f o => EcTerm.opsOf f ++ EcTerm.opsOf o
   | _, .listUniq l => EcTerm.opsOf l
   | _, .listMap f l => EcTerm.opsOf f ++ EcTerm.opsOf l
   | _, .listFilter p l => EcTerm.opsOf p ++ EcTerm.opsOf l
@@ -474,8 +527,40 @@ def EcTerm.opsOf : {t : EcTy} → EcTerm t → List (String × EcSig)
   | _, .listHas p l => EcTerm.opsOf p ++ EcTerm.opsOf l
   | _, .listCount p l => EcTerm.opsOf p ++ EcTerm.opsOf l
   | _, .fsetMem s x => EcTerm.opsOf s ++ EcTerm.opsOf x
+  | _, .support d x => EcTerm.opsOf d ++ EcTerm.opsOf x
+  | _, .distrMap d f => EcTerm.opsOf d ++ EcTerm.opsOf f
+  | _, .distrLet d f => EcTerm.opsOf d ++ EcTerm.opsOf f
+  | _, .distrProd d₁ d₂ => EcTerm.opsOf d₁ ++ EcTerm.opsOf d₂
+  | _, .distrExcept d p => EcTerm.opsOf d ++ EcTerm.opsOf p
+  | _, .toSeq p => EcTerm.opsOf p
+  | _, .finiteType _ => []
   | _, .ite c thn els => EcTerm.opsOf c ++ EcTerm.opsOf thn ++ EcTerm.opsOf els
   | _, .letIn _ v body => EcTerm.opsOf v ++ EcTerm.opsOf body
+  | _, .forallB _ _ body => EcTerm.opsOf body
+  | _, .existsB _ _ body => EcTerm.opsOf body
+
+/-! ## The modules a restriction names -/
+
+/-- The modules an EasyCrypt restriction `A{-M, -B}` excludes: the `var`
+declarations of the concrete modules it names, and the source names of the module
+binders in scope it names. An abstract module declares no globals, so a binder
+contributes the footprint its own quantifier binds rather than a list of
+declarations. -/
+structure EcModRestr where
+  /-- The `var` declarations of the concrete modules the restriction names. -/
+  globals : List EcGlobal
+  /-- The source names of the module binders in scope the restriction names. -/
+  binders : List String
+
+/-- The restriction naming the modules of both, in the order they occur. -/
+def EcModRestr.append (a b : EcModRestr) : EcModRestr where
+  globals := a.globals ++ b.globals
+  binders := a.binders ++ b.binders
+
+/-- The restriction naming no module. -/
+def EcModRestr.empty : EcModRestr where
+  globals := []
+  binders := []
 
 /-! ## The formula and probability layers -/
 
@@ -551,6 +636,18 @@ inductive EcForm where
   disjointness of the two footprints and the hypothesis on the bound module that
   `allModRestr` carries. -/
   | allModRestrOn (name : String) (I : EcInterface) (gs : List EcGlobal) (body : EcForm)
+  /-- Universal quantification over the modules of a module type restricted away
+  from the footprint the restriction `r` names, EasyCrypt's
+  `forall (A <: I{-M, -B})` for a restriction that names a module binder in scope
+  alongside the concrete modules. The footprint is the declared globals of the
+  concrete modules together with the bound footprint of each named binder. -/
+  | allModRestrOf (name : String) (I : EcInterface) (r : EcModRestr) (body : EcForm)
+  /-- Universal quantification over the modules of a module type restricted away
+  from the footprint the restriction `r` names, together with the footprint the
+  bound module lives on. The restriction is both the disjointness of the two
+  footprints and the hypothesis on the bound module that `allModRestrOf`
+  carries. -/
+  | allModRestrOfOn (name : String) (I : EcInterface) (r : EcModRestr) (body : EcForm)
   /-- Universal quantification over the realizations of the abstract operator
   declared at `path` with signature `s`, EasyCrypt's theory-level `op f : T.`
   read from a statement of the declaring theory. The body reads the bound
@@ -594,6 +691,9 @@ inductive EcProb where
   | const (r : EcRealLit)
   /-- A probability parameter bound by `EcForm.allProb`. -/
   | pvar (x : String)
+  /-- EasyCrypt's `mu d p`: the probability that a sample from the distribution
+  `d` satisfies the predicate `p`. -/
+  | mu {a : EcTy} (d : EcTerm (.distr a)) (p : EcTerm (.arrow a .bool)) : EcProb
   /-- Sum of two probability expressions. -/
   | add (a b : EcProb)
   /-- Product of two probability expressions. -/
@@ -605,10 +705,11 @@ end
 
 /-! ### Footprint occurrences
 
-Whether a statement compares the footprint of a named module binder. This is what
-decides which of the two module quantifiers a binder becomes: the footprint is a
-second bound variable exactly when the body names it. A nested binder of the same
-name shadows the outer one, so the search stops there. -/
+Whether a statement compares the footprint of a named module binder. This is one
+of the two conditions deciding which of the two module quantifiers a binder
+becomes, `restrictsAgainstMod` being the other: the footprint is a second bound
+variable when the body reads it. A nested binder of the same name shadows the
+outer one, so the search stops there. -/
 
 mutual
 
@@ -637,6 +738,8 @@ def EcForm.namesGlobOf (name : String) : EcForm → Bool
   | .allModRestr nm _ _ body => nm != name && EcForm.namesGlobOf name body
   | .allModOn nm _ body => nm != name && EcForm.namesGlobOf name body
   | .allModRestrOn nm _ _ body => nm != name && EcForm.namesGlobOf name body
+  | .allModRestrOf nm _ _ body => nm != name && EcForm.namesGlobOf name body
+  | .allModRestrOfOn nm _ _ body => nm != name && EcForm.namesGlobOf name body
   | .allOp _ _ body => EcForm.namesGlobOf name body
   | .allConst _ _ body => EcForm.namesGlobOf name body
   | .lossless _ _ => false
@@ -654,11 +757,116 @@ def EcProb.namesGlobOf (name : String) : EcProb → Bool
   | .pr _ _ _ _ ev => EcForm.namesGlobOf name ev
   | .const _ => false
   | .pvar _ => false
+  | .mu _ _ => false
   | .add a b => EcProb.namesGlobOf name a || EcProb.namesGlobOf name b
   | .mul a b => EcProb.namesGlobOf name a || EcProb.namesGlobOf name b
   | .absDiff a b => EcProb.namesGlobOf name a || EcProb.namesGlobOf name b
 
 end
+
+/-! ### Restriction occurrences
+
+Whether a module restriction inside a statement is stated against a named module
+binder. Such a restriction is against the footprint the binder carries, which
+only the `…On` quantifiers bind, so this is the second condition deciding which
+of the two module quantifiers a binder becomes. The restriction of a nested
+binder is read in the scope enclosing that binder, so it is searched whatever the
+nested binder is named; the nested binder's body is searched only when it does
+not shadow the name. -/
+
+mutual
+
+/-- Whether a module restriction inside the formula is stated against the module
+binder `name`. -/
+def EcForm.restrictsAgainstMod (name : String) : EcForm → Bool
+  | .tru => false
+  | .fls => false
+  | .holds _ => false
+  | .eqT _ _ => false
+  | .memEq _ _ => false
+  | .memEqOn _ _ _ => false
+  | .memEqOnMod _ _ _ => false
+  | .not f => EcForm.restrictsAgainstMod name f
+  | .and a b => EcForm.restrictsAgainstMod name a || EcForm.restrictsAgainstMod name b
+  | .or a b => EcForm.restrictsAgainstMod name a || EcForm.restrictsAgainstMod name b
+  | .imp a b => EcForm.restrictsAgainstMod name a || EcForm.restrictsAgainstMod name b
+  | .iff a b => EcForm.restrictsAgainstMod name a || EcForm.restrictsAgainstMod name b
+  | .ifF _ thn els =>
+      EcForm.restrictsAgainstMod name thn || EcForm.restrictsAgainstMod name els
+  | .letF _ _ body => EcForm.restrictsAgainstMod name body
+  | .allTy _ _ body => EcForm.restrictsAgainstMod name body
+  | .exTy _ _ body => EcForm.restrictsAgainstMod name body
+  | .allMem _ body => EcForm.restrictsAgainstMod name body
+  | .exMem _ body => EcForm.restrictsAgainstMod name body
+  | .allProb _ body => EcForm.restrictsAgainstMod name body
+  | .allMod nm _ body => nm != name && EcForm.restrictsAgainstMod name body
+  | .allModRestr nm _ _ body => nm != name && EcForm.restrictsAgainstMod name body
+  | .allModOn nm _ body => nm != name && EcForm.restrictsAgainstMod name body
+  | .allModRestrOn nm _ _ body => nm != name && EcForm.restrictsAgainstMod name body
+  | .allModRestrOf nm _ r body =>
+      r.binders.contains name || (nm != name && EcForm.restrictsAgainstMod name body)
+  | .allModRestrOfOn nm _ r body =>
+      r.binders.contains name || (nm != name && EcForm.restrictsAgainstMod name body)
+  | .allOp _ _ body => EcForm.restrictsAgainstMod name body
+  | .allConst _ _ body => EcForm.restrictsAgainstMod name body
+  | .lossless _ _ => false
+  | .isLossless _ => false
+  | .probCmp _ a b =>
+      EcProb.restrictsAgainstMod name a || EcProb.restrictsAgainstMod name b
+  | .hoare _ _ _ pre post =>
+      EcForm.restrictsAgainstMod name pre || EcForm.restrictsAgainstMod name post
+  | .bdHoare _ _ _ pre post _ _ =>
+      EcForm.restrictsAgainstMod name pre || EcForm.restrictsAgainstMod name post
+  | .equiv _ _ _ _ _ _ pre post =>
+      EcForm.restrictsAgainstMod name pre || EcForm.restrictsAgainstMod name post
+
+/-- Whether a module restriction inside the probability expression's events is
+stated against the module binder `name`. -/
+def EcProb.restrictsAgainstMod (name : String) : EcProb → Bool
+  | .pr _ _ _ _ ev => EcForm.restrictsAgainstMod name ev
+  | .const _ => false
+  | .pvar _ => false
+  | .mu _ _ => false
+  | .add a b => EcProb.restrictsAgainstMod name a || EcProb.restrictsAgainstMod name b
+  | .mul a b => EcProb.restrictsAgainstMod name a || EcProb.restrictsAgainstMod name b
+  | .absDiff a b =>
+      EcProb.restrictsAgainstMod name a || EcProb.restrictsAgainstMod name b
+
+end
+
+/-- Whether the module binder `name` needs the footprint the `…On` quantifiers
+bind: the body either compares that footprint or restricts a nested binder
+against it. -/
+def EcForm.needsFootprintOf (name : String) (f : EcForm) : Bool :=
+  f.namesGlobOf name || f.restrictsAgainstMod name
+
+/-- An interface declaring no procedure, for the checks below. -/
+private def guardNoProcs : EcInterface where
+  names := []
+  sig := fun _ => ⟨.unit, .unit⟩
+
+-- A nested binder restricted against `A` is an occurrence of `A`.
+#guard EcForm.restrictsAgainstMod "A"
+  (.allModRestrOf "S" guardNoProcs { globals := [], binders := ["A"] } .tru)
+
+-- A restriction against another binder is not an occurrence of `A`.
+#guard !EcForm.restrictsAgainstMod "A"
+  (.allModRestrOf "S" guardNoProcs { globals := [], binders := ["B"] } .tru)
+
+-- A binder that shadows `A` hides the occurrences under it.
+#guard !EcForm.restrictsAgainstMod "A"
+  (.allMod "A" guardNoProcs
+    (.allModRestrOf "S" guardNoProcs { globals := [], binders := ["A"] } .tru))
+
+-- The restriction of the shadowing binder is read outside it, so an occurrence
+-- there counts.
+#guard EcForm.restrictsAgainstMod "A"
+  (.allModRestrOf "A" guardNoProcs { globals := [], binders := ["A"] } .tru)
+
+-- The two conditions are independent: a body comparing `glob A` needs the
+-- footprint without restricting anything against it.
+#guard EcForm.needsFootprintOf "A" (.memEqOnMod "A" (.side .left) (.side .right))
+  && !EcForm.restrictsAgainstMod "A" (.memEqOnMod "A" (.side .left) (.side .right))
 
 /-! ### The operators a statement leaves free
 
@@ -698,6 +906,8 @@ def EcForm.opsOf : EcForm → List (String × EcSig)
   | .allModRestr _ _ _ body => EcForm.opsOf body
   | .allModOn _ _ body => EcForm.opsOf body
   | .allModRestrOn _ _ _ body => EcForm.opsOf body
+  | .allModRestrOf _ _ _ body => EcForm.opsOf body
+  | .allModRestrOfOn _ _ _ body => EcForm.opsOf body
   | .allOp path s body => (EcForm.opsOf body).filter (fun e => e != (path, s))
   | .allConst path t body =>
       (EcForm.opsOf body).filter (fun e => e != (path, ⟨EcTy.unit, t⟩))
@@ -717,6 +927,7 @@ def EcProb.opsOf : EcProb → List (String × EcSig)
   | .pr _ _ arg _ ev => arg.opsOf ++ EcForm.opsOf ev
   | .const _ => []
   | .pvar _ => []
+  | .mu d p => d.opsOf ++ p.opsOf
   | .add a b => EcProb.opsOf a ++ EcProb.opsOf b
   | .mul a b => EcProb.opsOf a ++ EcProb.opsOf b
   | .absDiff a b => EcProb.opsOf a ++ EcProb.opsOf b

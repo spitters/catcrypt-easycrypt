@@ -149,7 +149,7 @@ private def isBoolLitExpr {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
 
 /-- The lowered module: two `SPComp` procedures sharing the location `Coin.b`. -/
 noncomputable def coinImpl : ModuleImpl coinInterface :=
-  lowerModule ProcEnv.empty 0 coinModule
+  lowerModule ProcEnv.empty OpEnv.empty 0 coinModule
 
 /-! ## Closed forms of the two lowered procedures -/
 
@@ -160,7 +160,7 @@ theorem coinImpl_set :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.store bGlobal (EcExpr.lit (t := .bool) true), EcStmt.load bGlobal "r"]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "r") env)) = _
   simp only [lowerStmts_store_finLoc (g := bGlobal) (hfin := rfl),
     lowerStmts_load_finLoc (g := bGlobal) (hfin := rfl), lowerStmts_nil, SPComp.bind_assoc,
@@ -174,7 +174,7 @@ theorem coinImpl_toss :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sample .bool "c", EcStmt.store bGlobal (EcExpr.var .bool "c")]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "c") env)) = _
   simp only [lowerStmts_sample, lowerStmts_store_finLoc (g := bGlobal) (hfin := rfl),
     lowerStmts_nil, sampleFin_bool, SPComp.bind_assoc, SPComp.pure_bind, evalExpr,

@@ -142,8 +142,8 @@ structure PRFLaws (D : PRFData) : Prop where
 theorem prfDKLosslessAt_iff (D : PRFData) :
     prfDKLosslessAt D ↔ SDistr.mass D.dK = 1 := by
   simp only [prfDKLosslessAt, importedPropWithOps, prfDKLosslessBody,
-    transForm_isLossless, evalTerm_opApp, PRFData.toOpEnv, OpEnv.bindConst,
-    OpEnv.bindOp_same]
+    transForm_isLossless, evalTerm_opApp, FormEnv.withOps_ops, PRFData.toOpEnv,
+    OpEnv.bindConst, OpEnv.bindOp_same]
 
 /-- The closed statement quantifies over the realization, at the type `dK`'s
 declaration gives it. -/
@@ -151,7 +151,7 @@ theorem prfDKLosslessProp_iff :
     prfDKLosslessProp ↔ ∀ dK : SDistr (Carrier "Top.PseudoRF.K"), SDistr.mass dK = 1 := by
   simp only [prfDKLosslessProp, importedProp, prfDKLossless, prfDKLosslessBody,
     transForm_allConst, transForm_isLossless, evalTerm_opApp, FormEnv.bindConst,
-    OpEnv.bindConst, OpEnv.bindOp_same]
+    FormEnv.withOps_ops, OpEnv.bindConst, OpEnv.bindOp_same]
 
 /-! ## The committed realization -/
 

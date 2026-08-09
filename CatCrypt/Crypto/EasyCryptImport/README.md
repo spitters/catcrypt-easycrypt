@@ -67,10 +67,10 @@ program variables, and module restrictions.
 
 | Layer | Fragment |
 |---|---|
-| Types | `unit`, `bool`, a finite scalar type (`fin n`, of cardinality `n`, interpreted as `Fin n`), products, `int`, and finite maps (`map a b`, an association list). `EcTy.isFin` marks the finite subset — `unit`, `bool`, `fin n`, and a product of two finite codes — which is where uniform sampling and a `Location` live |
-| Expressions | variables, literals, negation, conjunction, exclusive-or, decidable equality at any type code, pair construction and projection, wrapping addition on `fin n`, integer addition and comparison, and the finite-map operations (bind a key, test membership, look up with a default). Disjunction and implication decode through their de Morgan images |
-| Distributions | the uniform distribution at a finite code, `dunit`, `dmap`, `dcond`, `dlet`, the independent product ``(`*`)``, `dscale`, `drestrict`, and `dexcepted` (`d \ X`), which is `dcond` at the negated predicate — its own EasyCrypt definition. A distribution operator whose argument is a function carries the binder's identity — its source name together with EasyCrypt's uniqueness stamp — and the body is evaluated in the local valuation extended at that identity |
-| Statements | local assignment, uniform sampling at a finite code, sampling from a distribution expression, global read and write at any code, the conditional, the bounded loop `for i = 0 to n-1`, an argument-free intra-game call (inlined under a depth bound), and a call `x <@ q(a)` at a signature resolved against the ambient environment |
+| Types | `unit`, `bool`, a finite scalar type (`fin n`, of cardinality `n`, interpreted as `Fin n`), products, `int`, finite maps (`map a b`, an association list), `option`, `list`, `fset` (a `Finset`, so two insertion orders are equal), a distribution code, a function code, an integer range, and an opaque carrier keyed by a declared path. `EcTy.isFin` marks the finite subset — `unit`, `bool`, `fin n`, products of finite codes, and `option` of a finite code — which is where uniform sampling and a `Location` live. A `Concrete` type alias without parameters registers at its right-hand code; a `subtype` declaration registers at an integer-range code when the ingestion realizes its bound, and at an opaque carrier otherwise, with its non-emptiness recorded as witnessed by a named source lemma or as assumed |
+| Expressions | variables, literals, negation, conjunction, exclusive-or, decidable equality at any type code, pair construction and projection, the conditional `e ? a : b`, wrapping addition on `fin n`, integer addition, multiplication, negation, Euclidean division with remainder, absolute value, greatest common divisor and comparison, the option former and the elimination `odflt`, list cons / `rcons` / `size` / membership / indexing, finite-set singleton / union / membership, and the finite-map operations (bind a key, test membership, look up with a default). Disjunction and implication decode through their de Morgan images |
+| Distributions | the uniform distribution at a finite code, `dunit`, `dmap`, `dcond`, `dlet`, `dlist` (`n` independent samples, at a count given as an integer expression), the independent product ``(`*`)``, `dscale`, `drestrict`, and `dexcepted` (`d \ X`), which is `dcond` at the negated predicate — its own EasyCrypt definition. A distribution operator whose argument is a function carries the binder's identity — its source name together with EasyCrypt's uniqueness stamp — and the body is evaluated in the local valuation extended at that identity |
+| Statements | local assignment, assignment of a tuple to several locals, uniform sampling at a finite code, sampling from a distribution expression, global read and write at any code, the conditional, the bounded loop `for i = 0 to n-1`, the unbounded `while` — lowered through `NonUniform.whileLoopS`, which threads the valuation beside the heap because the guard reads it and the body rewrites it, and reads the loop as the limit of its bounded approximants, so a run that never leaves it carries failure mass rather than an outcome (partial correctness, which is what `pHoare_whileLoop` is stated against) — an argument-free intra-game call (inlined under a depth bound), and a call `x <@ q(a)` at a signature resolved against the ambient environment, binding one local or a tuple of them. A global read inside a statement's expression hoists into a load prepended to the statement, in first-occurrence order |
 | Memory | a local variable is a meta-level valuation entry keyed by its identity — a program variable by its source name, a bound identifier by that name together with its uniqueness stamp — so a local assignment is functional rebinding and a binder cannot capture an occurrence of another identifier of its name; a module-scoped `var` is an `EcGlobal` at a CatCrypt `GLocation`, read and written by `SPComp.gget` / `SPComp.gset`, at every type code. At a finite code that cell is also a `Location` read and written by `SPComp.get` / `SPComp.set` (`lowerStmts_load_finLoc`, `lowerStmts_store_finLoc`) |
 | Modules | concrete modules with global state, module types, functors of any number of parameters (a curried Lean function on `ModuleImpl`s, one argument per parameter), and abstract modules — an adversary or oracle given only by its interface — as `ModuleImpl` parameters, so an imported game quantified over all adversaries is a Lean `∀ (A : ModuleImpl I), …` |
 
@@ -78,8 +78,8 @@ program variables, and module restrictions.
 
 | Layer | Fragment |
 |---|---|
-| Terms | logical variables, literals, the expression fragment above, a module global read at a memory (`g{&m}`), and the result of the enclosing judgement (`res{1}`, `res{2}`, `res`) |
-| Probabilities | `Pr[q(arg) @ &m : ev]`, constants, a probability parameter, sum, product, absolute difference |
+| Terms | logical variables, literals, the expression fragment above, a module global read at a memory (`g{&m}`), and the result of the enclosing judgement (`res{1}`, `res{2}`, `res`). A term at a function code is a lambda or an operator read, and an applied one is an application, which is what carries the predicate of a list combinator or of `choiceb`. Beyond those: an operator the ingestion's tables commit to a meaning for, applied to a term; the definite description `choiceb`; the iterators `iter` and `iterop`; and `map`, `filter`, `foldr`, `all`, `has`, `count` and `uniq` on lists |
+| Probabilities | `Pr[q(arg) @ &m : ev]`, a numeral or the reciprocal of one, a probability parameter, sum, product, absolute difference |
 | Formulas | the first-order skeleton, quantifiers over a type code, a memory, a probability parameter or a module type, term and memory equality, agreement of two memories on a module's footprint (`={glob M}`), `if`, `let` |
 | Judgements | the procedure-level `hoare`, `bd_hoare` and `equiv`, and probability comparisons |
 
@@ -125,6 +125,32 @@ outside the restricting module's footprint implies. A concrete module's
 identifier, which is always a binder, and the typechecker expands a concrete
 module's footprint into one equality per declared `var` before the export.
 
+### Coverage of EasyCrypt's shipped theories
+
+`--survey-all` decode-attempts every item of every export in a directory, in one
+process, and classifies each as closed, parameterised over a declaration the
+envelope does not realize, or a decode error:
+
+```
+lake env lean --run CatCrypt/Crypto/EasyCryptImport/EmitMain.lean \
+  --survey-all <dir-of-exports>
+```
+
+Run it rather than reading a number here. Every count moves with the exporter,
+with the ingestion tables and with the corpus, and a figure written down goes
+stale between one change and the next.
+
+Twenty-two of the shipped `crypto/` developments survey with no decode error at
+all — `assumptions/AEAD`, `assumptions/MRPKE`, `Commitment`,
+`DigitalSignatures`, `KeyedHashFunctions`, `LorR`, `MAC`, `OW`, `pke/PKE_CPA`,
+`PKS`, `PRF`, `PRG`, `PublicKeyEncryption`, `PublicKeyEncryptionROM`,
+`SecureChannels`, `SigmaProtocol`, `ske/CCA`, `ske/CCA1`, `ske/CPA`,
+`ske/NewSKE`, `SymmetricEncryption` and `TweakableHashFunctions`. Every item of
+each either closes or is reported parameterised. "Parameterised" is not a failure
+and not a silent weakening: the item decodes against a declaration the envelope
+leaves abstract, and the caller supplies it. These are the developments to import
+against, and the ones a change to the fragment should keep clean.
+
 ## What does not import
 
 Every construct below is rejected by name, with a decode error carrying the
@@ -133,19 +159,18 @@ merely typechecks.
 
 | Construct | Reason |
 |---|---|
-| The distribution operators outside `EcDistr` (`dnull`, `dbiased`, `dbin`, `duniform` over a list, `dlist`, `dfun`, `dopt`, `dfold`, `dinter`) | a distribution operator outside the ingestion's `distrOpPaths` table cannot decode to a sample. `dbiased` and `dbin` take a real-valued argument in an expression position, and reals reach the importer only as probabilities; the rest need a list, an option or a function type, none of which `EcTy` has |
+| The distribution operators outside `EcDistr` (`dnull`, `dbiased`, `dbin`, `duniform` over a list, `dfun`, `dopt`, `dfold`, `dinter`) | a distribution operator outside the ingestion's `distrOpPaths` table cannot decode to a sample. `dbiased` and `dbin` take a real-valued argument in an expression position, and reals reach the importer only as probabilities; the rest need an option or a function type, neither of which `EcTy` has |
 | A distribution operator's function argument given other than as a one-binder lambda | `EcDistr`'s binder is a variable name; a predicate supplied as an operator, a composition, or a lambda of several binders has no image |
-| Unbounded `while` | it carries a runtime guard and no bound; the AST's only loop is the statically bounded one |
 | Uniform sampling at a non-finite code | `SPComp.sample` is uniform over its carrier, so `EcStmt.sample` and `EcDistr.uniform` each carry a proof that the code is finite and the decoder rejects a uniform sample at `int` or at a map. A non-uniform distribution at a non-finite code is in the fragment, since `sampleFrom` needs no finiteness |
 | Complexity and cost annotations | there is no `SPComp`-level query counter or running time to state them against. An imported concrete-security statement that depends on `q_H` or on a running time loses that dependence |
 | Statement-level judgements (`hoare{ s }`, `equiv{ s₁ ~ s₂ }`) and assertions over procedure locals | their assertions range over local variables, and locals are meta-level in the lowering, so there is nothing for such an assertion to denote |
 | Expectation-Hoare and eager/lazy judgements | CatCrypt has no corresponding judgement |
 | Higher-order quantification over operators or distributions, and `glob M` in value position | the quantifiers range over a type code, a memory, a probability or a module type; a footprint is available as one side of a comparison, not as a value |
-| General real terms, including a quotient bound such as `q / 2^n` | reals appear only as probabilities |
+| A real bound outside a rational numeral, such as `q / 2^n` | reals appear only as probabilities, and a probability constant is a numeral or the reciprocal of one. An exponent that is a variable needs a probability former carrying a term, which the layer does not have |
 | Signed subtraction of probabilities | probabilities translate into `ℝ≥0∞`, where subtraction is truncated, so a difference EasyCrypt allows to be negative has no faithful image. The bound shapes EasyCrypt statements use, `\|Pr[A] − Pr[B]\| ≤ ε` and `Pr[A] ≤ Pr[B] + ε`, are in the fragment |
-| A module defined as an application of a functor, `module G = F(M)` or `module G (X : I) = F(X, M)` | its body is an `ME_Alias` whose target is the applied module path as a string, with no body behind it; the export's `arity` says how many of the node's parameters the alias binds itself and how many are the target's residual ones. The image a statement names is supplied by the caller through `FormEnv.functorImages` |
-| Two parameters of one functor sharing a source name, `module F (P : I) (P : J)` | EasyCrypt permits it, and a call inside the body is the cross-path `P./p`, which carries no stamp; binding both under that prefix would make one shadow the other |
-| Pattern matching, `let` over a tuple pattern, tuple expressions of arity above two, an identifier reduced to a name without its uniqueness stamp | each has no image in the AST, and truncating a stamp would make two distinct binders of the same source name alias. A tuple *type* of any arity decodes, as the right-nested binary product `t₁ × (t₂ × (… × tₙ))`; `Etuple` and `Eproj` stay binary. A procedure binds every formal of `sig.args`, each taking its component of the right-nested argument at call entry |
+| A top-level module defined as an application of a functor, `module G = F(M)` or `module G (X : I) = F(X, M)` | its body is an `ME_Alias` whose target is the applied module path as a string, with no body behind it; the export's `arity` says how many of the node's parameters the alias binds itself and how many are the target's residual ones. The image a statement names is supplied by the caller through `FormEnv.functorImages`. A *nested* alias resolves instead, against the target's structure body in the same envelope: applying a functor binds the parameter's prefix in the `ProcEnv` rather than rewriting the body, so the body's calls land when the argument carries the parameter's own name, and an argument under any other name is a decode error rather than a rename |
+| Two parameters of one functor sharing a source name, `module F (P : I) (P : J)` | EasyCrypt tells the two apart by their stamps, and the export does not carry them: `jxpath` renders a cross-path through `EcPath.x_tostring`, which prints the name alone, so a call inside the body reaches the decoder as `P./p`. Binding both under that prefix would make one shadow the other, and nothing in the export says which the call means |
+| Pattern matching, `let` over a tuple pattern, tuple expressions of arity above four, an identifier reduced to a name without its uniqueness stamp | each has no image in the AST, and truncating a stamp would make two distinct binders of the same source name alias. A tuple *type* of any arity decodes, as the right-nested binary product `t₁ × (t₂ × (… × tₙ))`; `Etuple` decodes at two, three and four components against that spine, and `Eproj` stays binary. A procedure binds every formal of `sig.args`, each taking its component of the right-nested argument at call entry |
 
 ## Running the pipeline
 

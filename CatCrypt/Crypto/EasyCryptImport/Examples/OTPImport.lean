@@ -61,7 +61,7 @@ def otpGame (m : Bool) : EcGame where
 This identifies the importer's structural output with the hand-written `SPComp`
 form, so the coupling reasoning applies to the imported game unchanged. -/
 theorem lowerGame_otpGame (m : Bool) :
-    lowerClosedGame (otpGame m)
+    lowerClosedGame OpEnv.empty (otpGame m)
       = SPComp.bind (SPComp.sample Bool) (fun k => SPComp.pure (xor k m)) := by
   simp only [lowerClosedGame, lowerGame, otpGame, lowerStmts_sample, lowerStmts_assign,
     lowerStmts_nil, evalExpr, Env.read_update_same, SPComp.bind_assoc, SPComp.pure_bind,
@@ -71,7 +71,7 @@ theorem lowerGame_otpGame (m : Bool) :
 one-time-pad games — encrypting `m₀` versus `m₁` — are pRHL-equal. The uniform key
 masks the message, so `xor`-by-`(m₀ ^ m₁)` is a coupling of the two runs. -/
 theorem otpImport_coupling (m₀ m₁ : Bool) :
-    pRHL eqPre (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁)) eqPost := by
+    pRHL eqPre (lowerClosedGame OpEnv.empty (otpGame m₀)) (lowerClosedGame OpEnv.empty (otpGame m₁)) eqPost := by
   rw [lowerGame_otpGame, lowerGame_otpGame]
   apply rHoare_bij_step (boolXorBij (xor m₀ m₁))
   intro a
@@ -86,7 +86,7 @@ distinguisher `A` has advantage exactly `0`, obtained from the pRHL equality
 `otpImport_coupling` via `advantage_zero_of_rHoare`. This is the imported form of
 one-time secrecy. -/
 theorem otpImport_advantage_zero (m₀ m₁ : Bool) (A : Bool → SPComp Bool) :
-    AdvantageA (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁)) A = 0 :=
+    AdvantageA (lowerClosedGame OpEnv.empty (otpGame m₀)) (lowerClosedGame OpEnv.empty (otpGame m₁)) A = 0 :=
   advantage_zero_of_rHoare _ _ (otpImport_coupling m₀ m₁) A
 
 end CatCrypt.Crypto.EasyCryptImport.OTPImport

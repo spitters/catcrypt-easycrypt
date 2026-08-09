@@ -192,6 +192,29 @@ inductive EcExpr : EcTy → Type where
   | var (t : EcTy) (x : EcVarId) : EcExpr t
   /-- A literal of the interpreted type. -/
   | lit {t : EcTy} (v : t.interp) : EcExpr t
+  /-- An abstract operator of the enclosing theory, applied to an argument. The
+  operator has no definition the source fixes, so the expression denotes a value
+  only against a realization of the declaration: a program that reads one is
+  parametric in it, exactly as a statement that reads one is (`EcForm.allOp`). A
+  declaration of several arguments is read at the signature whose argument code is
+  those arguments' codes as a right-nested product, the nesting a procedure's
+  formals carry, and a declaration of none at `⟨unit, t⟩` applied to `.lit ()`.
+  A declaration whose result is a distribution code is how an abstract
+  distribution reaches sampling, through `EcDistr.ofExpr`. -/
+  | opApp (path : String) (s : EcSig) (arg : EcExpr s.arg) : EcExpr s.res
+  /-- A one-binder lambda, EasyCrypt's `fun x => e`. The binder is a local of
+  the valuation the body reads, so the value is the function sending each
+  argument to the body under the extended valuation. -/
+  | lam (a : EcTy) {b : EcTy} (x : EcVarId) (body : EcExpr b) :
+      EcExpr (.arrow a b)
+  /-- The image of a list under a function, EasyCrypt's `map`. -/
+  | listMap {a b : EcTy} (f : EcExpr (.arrow a b)) (l : EcExpr (.list a)) :
+      EcExpr (.list b)
+  /-- A function value applied to an argument. The function is any expression at
+  an arrow code — a formal parameter or a local holding one, which is how a
+  higher-order procedure receives it. Application is curried, so a source
+  application of several arguments is this constructor once per argument. -/
+  | app {a b : EcTy} (f : EcExpr (.arrow a b)) (x : EcExpr a) : EcExpr b
   /-- Boolean negation. -/
   | bnot (e : EcExpr .bool) : EcExpr .bool
   /-- Boolean conjunction. -/
@@ -231,9 +254,17 @@ inductive EcExpr : EcTy → Type where
       EcExpr (.map a b)
   /-- Whether a key is bound in a finite map. -/
   | mapMem {a b : EcTy} (m : EcExpr (.map a b)) (k : EcExpr a) : EcExpr .bool
+  /-- The map with every binding of a key removed, EasyCrypt's `rem`. -/
+  | mapRem {a b : EcTy} (m : EcExpr (.map a b)) (k : EcExpr a) :
+      EcExpr (.map a b)
   /-- The binding of a key in a finite map, or a default when it is unbound. -/
   | mapGetD {a b : EcTy} (m : EcExpr (.map a b)) (k : EcExpr a) (d : EcExpr b) :
       EcExpr b
+  /-- The finite set of the keys a finite map binds, EasyCrypt's `fdom`. -/
+  | mapFdom {a b : EcTy} (m : EcExpr (.map a b)) : EcExpr (.fset a)
+  /-- Whether a value is the binding of some key of a finite map, EasyCrypt's
+  `rng` applied to a map and a value. -/
+  | mapRng {a b : EcTy} (m : EcExpr (.map a b)) (y : EcExpr b) : EcExpr .bool
   /-- A conditional expression, EasyCrypt's `e ? a : b`. Both branches are
   expressions, so neither samples nor calls and the reading is a `Bool` test.
   A branch that is a statement is `EcStmt.ite` instead. -/
@@ -256,12 +287,47 @@ inductive EcExpr : EcTy → Type where
   range — EasyCrypt's `nth d l i`. -/
   | listNth {a : EcTy} (d : EcExpr a) (l : EcExpr (.list a)) (i : EcExpr .int) :
       EcExpr a
+  /-- The first element of a list, or the default `z` when the list is empty —
+  EasyCrypt's `head z l`. -/
+  | listHead {a : EcTy} (z : EcExpr a) (l : EcExpr (.list a)) : EcExpr a
+  /-- The list with a position replaced, EasyCrypt's array update
+  `arr.[i <- x]`. -/
+  | listSet {a : EcTy} (l : EcExpr (.list a)) (i : EcExpr .int) (x : EcExpr a) :
+      EcExpr (.list a)
+  /-- The first `n` elements of a list, EasyCrypt's `take`. -/
+  | listTake {a : EcTy} (l : EcExpr (.list a)) (n : EcExpr .int) :
+      EcExpr (.list a)
+  /-- The elements of a finite set as a list, EasyCrypt's `elems`. -/
+  | fsetElems {a : EcTy} (s : EcExpr (.fset a)) : EcExpr (.list a)
+  /-- The concatenation of two lists, EasyCrypt's `++`. -/
+  | listCat {a : EcTy} (l₁ l₂ : EcExpr (.list a)) : EcExpr (.list a)
+  /-- Two lists paired position by position, EasyCrypt's `zip`. -/
+  | listZip {a b : EcTy} (l₁ : EcExpr (.list a)) (l₂ : EcExpr (.list b)) :
+      EcExpr (.list (.prod a b))
+  /-- Whether a list repeats no element, EasyCrypt's `uniq`. -/
+  | listUniq {a : EcTy} (l : EcExpr (.list a)) : EcExpr .bool
+  /-- Whether a predicate holds of some element, EasyCrypt's `has`. -/
+  | listHas {a : EcTy} (p : EcExpr (.arrow a .bool)) (l : EcExpr (.list a)) :
+      EcExpr .bool
+  /-- A universally quantified expression at the `bool` code, EasyCrypt's
+  `forall x, e`. The binder is a local of the valuation the body reads, and the
+  value is the classical decision of the proposition the body states — the
+  reading `EcTerm.forallB` already has at the term layer. -/
+  | forallB (a : EcTy) (x : EcVarId) (body : EcExpr .bool) : EcExpr .bool
+  /-- An existentially quantified expression at the `bool` code. -/
+  | existsB (a : EcTy) (x : EcVarId) (body : EcExpr .bool) : EcExpr .bool
+  /-- The concatenation of a list of lists, EasyCrypt's `flatten`. -/
+  | listFlatten {a : EcTy} (l : EcExpr (.list (.list a))) : EcExpr (.list a)
   /-- The singleton finite set, EasyCrypt's `fset1`. -/
   | fsetSingle {a : EcTy} (x : EcExpr a) : EcExpr (.fset a)
   /-- The union of two finite sets, EasyCrypt's `` (`|`) ``. -/
   | fsetUnion {a : EcTy} (s t : EcExpr (.fset a)) : EcExpr (.fset a)
   /-- Membership in a finite set, EasyCrypt's `mem`. -/
   | fsetMem {a : EcTy} (s : EcExpr (.fset a)) (x : EcExpr a) : EcExpr .bool
+  /-- The number of elements of a finite set, EasyCrypt's `card`. -/
+  | fsetCard {a : EcTy} (s : EcExpr (.fset a)) : EcExpr .int
+  /-- Finite-set inclusion, EasyCrypt's `\subset`. -/
+  | fsetSubset {a : EcTy} (s t : EcExpr (.fset a)) : EcExpr .bool
 
 /-- The value an expression is, when the expression is a literal. The type index
 is quantified, which is what lets a caller read the leaf out of an expression
@@ -327,6 +393,11 @@ inductive EcDistr : EcTy → Type where
   | letD {a b : EcTy} (d : EcDistr a) (x : EcVarId) (body : EcDistr b) : EcDistr b
   /-- The independent product `d₁ `*` d₂`, EasyCrypt's ``(`*`)``. -/
   | prod {a b : EcTy} (d₁ : EcDistr a) (d₂ : EcDistr b) : EcDistr (.prod a b)
+  /-- A list of independent samples, EasyCrypt's `dlist d n`. `DList.ec`
+  characterises it by `dlist0` (the point mass at the empty list at a
+  non-positive count) and `dlistS` (a cons over the independent product of `d`
+  with the shorter list), which is what the recursion below is. -/
+  | dlist {a : EcTy} (d : EcDistr a) (n : EcExpr .int) : EcDistr (.list a)
   /-- `d` rescaled to mass one, EasyCrypt's `dscale`. -/
   | scale {t : EcTy} (d : EcDistr t) : EcDistr t
   /-- `d` with the mass outside `fun x => p` sent to failure, EasyCrypt's
@@ -370,6 +441,13 @@ inductive EcStmt where
   | ite (c : EcExpr .bool) (thn els : List EcStmt)
   /-- Bounded loop `for i = 0 to n-1 do body`. -/
   | forN (n : Nat) (body : List EcStmt)
+  /-- Unbounded loop `while c do body`. The guard is an expression over the local
+  valuation: a source guard reading a module global is decoded with that read
+  hoisted into a load placed both before the loop and at the end of the body, so
+  each iteration tests a value read in that iteration. The lowering is the limit
+  of the bounded approximants (`CatCryptCore.NonUniform.whileLoopS`), so a run
+  that never leaves the loop carries failure mass rather than an outcome. -/
+  | whileS (c : EcExpr .bool) (body : List EcStmt)
   /-- Argument-free call `p()` to a procedure of the enclosing game's table. -/
   | call (p : String)
   /-- The call `x <@ q(arg)` at signature `s`, resolved against the ambient
@@ -413,6 +491,7 @@ def EcStmt.assignedLocals : EcStmt → Option (List String)
       | some a, some b => some (a ++ b)
       | _, _ => none
   | .forN _ body => EcStmt.assignedLocalsList body
+  | .whileS _ body => EcStmt.assignedLocalsList body
   | .call _ => none
   | .callProc _ _ _ x => some [x]
   | .callProcTuple _ _ _ xs => some xs

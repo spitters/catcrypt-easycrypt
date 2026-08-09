@@ -132,20 +132,20 @@ theorem lowerStmts_pointBody (env : Env) :
 
 /-- The lowered excepted game is the constant `true`. -/
 theorem lowerClosedGame_exceptedGame (k : EcVarId) :
-    lowerClosedGame (exceptedGame k) = SPComp.pure true := by
+    lowerClosedGame OpEnv.empty (exceptedGame k) = SPComp.pure true := by
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
-        [EcStmt.sampleD .bool "x" (dboolExceptFalse k)] emptyEnv)
+        [EcStmt.sampleD .bool "x" (dboolExceptFalse k)] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env)) = SPComp.pure true
   rw [lowerStmts_exceptedBody, SPComp.pure_bind]
   simp only [evalExpr, Env.read_update_same]
 
 /-- The lowered point-mass game is the constant `true`. -/
 theorem lowerClosedGame_pointGame :
-    lowerClosedGame pointGame = SPComp.pure true := by
+    lowerClosedGame OpEnv.empty pointGame = SPComp.pure true := by
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
-        [EcStmt.sampleD .bool "x" (EcDistr.point (EcExpr.lit (t := .bool) true))] emptyEnv)
+        [EcStmt.sampleD .bool "x" (EcDistr.point (EcExpr.lit (t := .bool) true))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env)) = SPComp.pure true
   rw [lowerStmts_pointBody, SPComp.pure_bind]
   simp only [evalExpr, Env.read_update_same]
@@ -153,24 +153,24 @@ theorem lowerClosedGame_pointGame :
 /-- The two imported games lower to one `SPComp Bool`: importing the `dexcepted`
 distribution and importing the point mass it equals give the same program. -/
 theorem lowerClosedGame_exceptedGame_eq_pointGame (k : EcVarId) :
-    lowerClosedGame (exceptedGame k) = lowerClosedGame pointGame := by
+    lowerClosedGame OpEnv.empty (exceptedGame k) = lowerClosedGame OpEnv.empty pointGame := by
   rw [lowerClosedGame_exceptedGame, lowerClosedGame_pointGame]
 
 /-- **The imported non-uniform game returns `true` with probability one.** -/
 theorem prTrue_exceptedGame (k : EcVarId) (h : Heap) :
-    prTrue (lowerClosedGame (exceptedGame k)) h = 1 := by
+    prTrue (lowerClosedGame OpEnv.empty (exceptedGame k)) h = 1 := by
   rw [lowerClosedGame_exceptedGame, prTrue_pure_bool]
   simp
 
 /-- The two imported games are pRHL-equal, from the program equality. -/
 theorem exceptedGame_coupling (k : EcVarId) :
-    pRHL eqPre (lowerClosedGame (exceptedGame k)) (lowerClosedGame pointGame) eqPost := by
+    pRHL eqPre (lowerClosedGame OpEnv.empty (exceptedGame k)) (lowerClosedGame OpEnv.empty pointGame) eqPost := by
   rw [lowerClosedGame_exceptedGame, lowerClosedGame_pointGame]
   exact rHoare_ret fun _ _ hpre => ⟨rfl, hpre⟩
 
 /-- Zero distinguishing advantage between the two imported games. -/
 theorem exceptedGame_advantage_zero (k : EcVarId) (A : Bool → SPComp Bool) :
-    AdvantageA (lowerClosedGame (exceptedGame k)) (lowerClosedGame pointGame) A = 0 :=
+    AdvantageA (lowerClosedGame OpEnv.empty (exceptedGame k)) (lowerClosedGame OpEnv.empty pointGame) A = 0 :=
   advantage_zero_of_rHoare _ _ (exceptedGame_coupling k) A
 
 /-! ## The uniform arm is the general arm at the uniform distribution -/
@@ -194,12 +194,12 @@ def uniformSampleGame : EcGame where
 uniform sampling arm lower to one program, so expressing an existing uniform
 sample through `EcStmt.sampleD` leaves its lowering unchanged. -/
 theorem lowerClosedGame_uniformSampleGameD :
-    lowerClosedGame uniformSampleGameD = lowerClosedGame uniformSampleGame := by
-  unfold lowerClosedGame lowerGame
+    lowerClosedGame OpEnv.empty uniformSampleGameD = lowerClosedGame OpEnv.empty uniformSampleGame := by
+  unfold lowerClosedGame OpEnv.empty lowerGame
   show SPComp.bind (lowerStmts ProcEnv.empty [] 0
-        [EcStmt.sampleD .bool "k" (EcDistr.uniform .bool)] emptyEnv) _
+        [EcStmt.sampleD .bool "k" (EcDistr.uniform .bool)] (emptyEnv OpEnv.empty)) _
       = SPComp.bind (lowerStmts ProcEnv.empty [] 0
-        [EcStmt.sample .bool "k"] emptyEnv) _
+        [EcStmt.sample .bool "k"] (emptyEnv OpEnv.empty)) _
   rw [lowerStmts_sampleD_uniform]
   rfl
 

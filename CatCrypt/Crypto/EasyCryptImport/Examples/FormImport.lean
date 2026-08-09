@@ -59,14 +59,14 @@ def mainSig : EcSig := ⟨.unit, .bool⟩
 against. -/
 noncomputable def otpEnv (m₀ m₁ : Bool) : ProcEnv :=
   (ProcEnv.empty.bindProc "OTP0.main" (s := mainSig)
-      (fun _ => lowerClosedGame (otpGame m₀))).bindProc "OTP1.main" (s := mainSig)
-      (fun _ => lowerClosedGame (otpGame m₁))
+      (fun _ => lowerClosedGame OpEnv.empty (otpGame m₀))).bindProc "OTP1.main" (s := mainSig)
+      (fun _ => lowerClosedGame OpEnv.empty (otpGame m₁))
 
 theorem otpEnv_zero (m₀ m₁ : Bool) :
-    otpEnv m₀ m₁ "OTP0.main" mainSig () = lowerClosedGame (otpGame m₀) := rfl
+    otpEnv m₀ m₁ "OTP0.main" mainSig () = lowerClosedGame OpEnv.empty (otpGame m₀) := rfl
 
 theorem otpEnv_one (m₀ m₁ : Bool) :
-    otpEnv m₀ m₁ "OTP1.main" mainSig () = lowerClosedGame (otpGame m₁) := rfl
+    otpEnv m₀ m₁ "OTP1.main" mainSig () = lowerClosedGame OpEnv.empty (otpGame m₁) := rfl
 
 /-! ## An imported equiv judgement -/
 
@@ -86,7 +86,7 @@ noncomputable def otpEquivGoal (m₀ m₁ : Bool) : Prop :=
 `OTPImport.otpImport_coupling` states. -/
 theorem otpEquivGoal_eq (m₀ m₁ : Bool) :
     otpEquivGoal m₀ m₁
-      = pRHL eqPre (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁)) eqPost :=
+      = pRHL eqPre (lowerClosedGame OpEnv.empty (otpGame m₀)) (lowerClosedGame OpEnv.empty (otpGame m₁)) eqPost :=
   rfl
 
 /-- The imported goal, closed. -/
@@ -111,8 +111,8 @@ probabilities of returning `true`, at every initial memory. The `Pr[… : res]`
 nodes land on `prTrue` through `transProb_prTrueOf`. -/
 theorem otpPrDiffGoal_eq (m₀ m₁ : Bool) :
     otpPrDiffGoal m₀ m₁
-      = ∀ h : Heap, absDiff (prTrue (lowerClosedGame (otpGame m₀)) h)
-          (prTrue (lowerClosedGame (otpGame m₁)) h) = (0 : ℕ) := by
+      = ∀ h : Heap, absDiff (prTrue (lowerClosedGame OpEnv.empty (otpGame m₀)) h)
+          (prTrue (lowerClosedGame OpEnv.empty (otpGame m₁)) h) = (0 : ℕ) := by
   simp only [otpPrDiffGoal, importedProp, otpPrDiffForm, EcForm.prDiffCmp, transForm,
     transProb_absDiff, transProb_prTrueOf, cmpRel]
   rfl
@@ -121,9 +121,9 @@ theorem otpPrDiffGoal_eq (m₀ m₁ : Bool) :
 `OTPImport.otpImport_coupling` is an equality of the underlying distributions at
 every heap. -/
 theorem lowerGame_otp_eq (m₀ m₁ : Bool) :
-    lowerClosedGame (otpGame m₀) = lowerClosedGame (otpGame m₁) :=
-  congrFun (pRHL_eq_implies_prog_eq (fun _ : Unit => lowerClosedGame (otpGame m₀))
-    (fun _ => lowerClosedGame (otpGame m₁)) (fun _ => otpImport_coupling m₀ m₁)) ()
+    lowerClosedGame OpEnv.empty (otpGame m₀) = lowerClosedGame OpEnv.empty (otpGame m₁) :=
+  congrFun (pRHL_eq_implies_prog_eq (fun _ : Unit => lowerClosedGame OpEnv.empty (otpGame m₀))
+    (fun _ => lowerClosedGame OpEnv.empty (otpGame m₁)) (fun _ => otpImport_coupling m₀ m₁)) ()
 
 /-- The imported goal, closed. -/
 theorem otpPrDiffGoal_holds (m₀ m₁ : Bool) : otpPrDiffGoal m₀ m₁ := by

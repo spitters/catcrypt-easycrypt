@@ -207,19 +207,19 @@ theorem retEnv_guess (A : ModuleImpl advInterface) :
 
 /-- `Ret0(A)` as a family indexed by the adversary module. -/
 noncomputable def ret0Impl (A : ModuleImpl advInterface) : SPComp Bool :=
-  lowerGame (retEnv A) ret0Game 0
+  lowerGame (retEnv A) OpEnv.empty ret0Game 0
 
 /-- `Ret1(A)` as a family indexed by the adversary module. -/
 noncomputable def ret1Impl (A : ModuleImpl advInterface) : SPComp Bool :=
-  lowerGame (retEnv A) ret1Game 0
+  lowerGame (retEnv A) OpEnv.empty ret1Game 0
 
 /-- The two functor images the statements name, keyed by the module binder they
 are applied to. -/
 noncomputable def retImages : String → ProcEnv → ProcEnv := fun name ρ =>
   if name = "A" then
     (ρ.bindProc "Top.Ret0(A)./main" (s := mainSig)
-        (fun _ => lowerGame ρ ret0Game 0)).bindProc
-      "Top.Ret1(A)./main" (s := mainSig) (fun _ => lowerGame ρ ret1Game 0)
+        (fun _ => lowerGame ρ OpEnv.empty ret0Game 0)).bindProc
+      "Top.Ret1(A)./main" (s := mainSig) (fun _ => lowerGame ρ OpEnv.empty ret1Game 0)
   else ρ
 
 /-- The lowered `Ret0(A)` in closed form. -/

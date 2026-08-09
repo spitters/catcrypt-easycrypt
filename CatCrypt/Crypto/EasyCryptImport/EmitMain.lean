@@ -6,6 +6,7 @@ Authors: CatCrypt Contributors
 import CatCrypt.Crypto.EasyCryptImport.EmitForm
 import CatCrypt.Crypto.EasyCryptImport.FormJson
 import CatCrypt.Crypto.EasyCryptImport.FunctorN
+import CatCrypt.Crypto.EasyCryptImport.Instances
 
 /-!
 # EasyCrypt import: the `ec2lean` entry point
@@ -216,6 +217,32 @@ def emitUsage : String :=
       "         [--proc <path>=<text>] [--procfn <path>=<text>] [--iface <name>=<text>]",
       "       writes an imported statement and its shallow reading" ]
 
+/-- A module body with its procedures removed, at the top level and at every
+nesting depth.
+
+A nested module's variables become the enclosing module's globals, so the nesting
+is kept, while its procedures are not read. Blanking only the outermost `procs`
+leaves a nested module's procedures to be decoded, and one of those reaching a
+construct with no image then stops the variables from registering at all — a
+module whose own `var` list is perfectly decodable disappears from the globals
+table because a procedure two levels down aliases something unresolved. -/
+def stripProcs : Nat → Json → Json
+  | 0, b => b.setObjVal! "procs" (Json.arr #[])
+  | d + 1, b =>
+    let b' := b.setObjVal! "procs" (Json.arr #[])
+    match b'.getObjVal? "modules" with
+    | .ok (.arr ms) =>
+      let ms' := ms.map (fun m =>
+        match m.getObjVal? "body" with
+        | .ok mb => m.setObjVal! "body" (stripProcs d mb)
+        | .error _ => m)
+      b'.setObjVal! "modules" (Json.arr ms')
+    | _ => b'
+
+/-- The nesting depth a module body's `stripProcs` is run to. A module nested
+more deeply than this keeps its procedures, which is the pre-existing reading. -/
+def stripProcsDepth : Nat := 8
+
 /-- The path a `Th_module` item declares and the `var` footprint its body gives:
 the item's own `var` declarations, at heap location ids `0` upwards in
 declaration order.
@@ -248,24 +275,55 @@ def moduleGlobalsOf (T : DecodeTables) (baseId : Nat) (j : Json) :
       fail s!"module '{name}' has body kind '{bodyKind}': only ME_Structure \
         declares variables"
     else
-      let modsA ← getArr bodyJ "modules"
+      let modsA0 ← getArr bodyJ "modules"
       let varsA ← getArr bodyJ "vars"
+      -- A nested alias is resolved here rather than inside the structure decode,
+      -- because what comes back is the target's body as the exporter wrote it —
+      -- procedures included — and a globals-only pass must read none of them.
+      -- The alias is kept rather than dropped: its variables are part of the
+      -- nesting module's footprint, and a footprint smaller than the source's
+      -- makes the hypothesis it restricts wider.
+      let ownParams : List String :=
+        match getArr modJ "params" with
+        | .ok pa => pa.toList.filterMap (fun p => (getIdent p "name").toOption)
+        | .error _ => []
+      let modsA := modsA0.map (fun m =>
+        match ((m.getObjVal? "body").toOption.bind (fun b => (getStr b "kind").toOption)) with
+        | some "ME_Alias" =>
+          match ((m.getObjVal? "body").toOption.bind (fun b => (getStr b "target").toOption)) with
+          | some tgt =>
+            let (fpath, _) := splitAliasTarget tgt
+            if ownParams.contains fpath then m
+            else
+              match aliasedBody T fpath with
+              | .ok (_, fbody) => m.setObjVal! "body" fbody
+              | .error _ => m
+          | none => m
+        | _ => m)
+      let bodyOnly : Json :=
+        stripProcs stripProcsDepth
+          (Json.mkObj
+            [("kind", Json.str "ME_Structure"), ("modules", Json.arr modsA),
+             ("vars", Json.arr varsA), ("procs", Json.arr #[])])
+      -- The parameter list is carried through: a nested alias naming one of
+      -- them has no body, and recognising it as a parameter is what keeps it
+      -- from being looked up as an envelope module.
+      let paramsJ := (modJ.getObjVal? "params").toOption.getD (Json.arr #[])
       let varsOnly : Json :=
-        Json.mkObj
-          [("body", Json.mkObj
-              [("kind", Json.str "ME_Structure"), ("modules", Json.arr modsA),
-               ("vars", Json.arr varsA), ("procs", Json.arr #[])]),
-           ("sig", Json.arr #[])]
+        Json.mkObj [("body", bodyOnly), ("sig", Json.arr #[]), ("params", paramsJ)]
       let S ← decodeStructureBody T baseId name mpath varsOnly
       .ok (S.path, S.globals)
 
-/-- The procedure signatures a functor item contributes, at the cross-path a
-judgement names them by: the functor applied to its own parameters, which is how
-the exporter writes `Top.RandomLR(L, R)./main`. `decodeStructure` rejects a
-parameterised module, so nothing else registers them.
+/-- The procedure signatures a functor item contributes, at two cross-paths per
+procedure: the functor applied to its own formal parameters, which is how the
+exporter writes `Top.RandomLR(L, R)./main`, and the functor's path with the
+argument group dropped, which is what `callHeadPath` reduces an applied spelling
+to. `decodeStructure` rejects a parameterised module, so nothing else registers
+them.
 
-A signature does not depend on which modules the parameters take, so one entry at
-the generic instance answers every application. -/
+A signature is declared by the functor's body and does not depend on which
+modules the parameters take, so the two entries carry the same signature and
+answer an application whatever it writes for the arguments. -/
 def functorProcSigs (T : DecodeTables) (baseId : Nat) (it : Json) :
     List (String × EcSig) :=
   match getStr it "kind", getStr it "path", it.getObjVal? "module" with
@@ -277,7 +335,9 @@ def functorProcSigs (T : DecodeTables) (baseId : Nat) (it : Json) :
         let names := pa.toList.filterMap (fun q => (getIdent q "name").toOption)
         let applied := p ++ "(" ++ String.intercalate ", " names ++ ")"
         let ofBody := fun (M : EcModule) =>
-          M.interface.names.map (fun q => (xqualify applied q, M.interface.sig q))
+          M.interface.names.flatMap (fun q =>
+            [(xqualify applied q, M.interface.sig q),
+             (xqualify p q, M.interface.sig q)])
         match decodeFunctorN T baseId it with
         | .ok Fn => ofBody Fn.body
         | .error _ =>
@@ -286,6 +346,66 @@ def functorProcSigs (T : DecodeTables) (baseId : Nat) (it : Json) :
           | .error _ => []
     | .error _ => []
   | _, _, _ => []
+
+/-- The procedure signatures a `Th_module` item declares, read off the item's
+`sig` array, which is the module signature the exporter writes for it. Each
+signature is keyed by the cross-path a call or a judgement names the procedure
+by: the module's path qualified with the procedure name, and, for a functor, the
+path applied to its own formal parameters as well, the two spellings
+`functorProcSigs` registers a decoded functor body at.
+
+`decodeStructureBody` checks a decoded body against this array (`checkDeclared`),
+so a module whose body decodes declares here the same signatures its structure
+gives. The two cases this reaches and a decoded structure does not are a
+procedure calling another procedure of its own module, whose signature is read
+while that module's own body is being decoded, and a module whose body names a
+construct the ingestion has no image for, which declares its signature all the
+same.
+
+A signature whose argument or result type does not decode is not registered: a
+type the ingestion has no image for gives no signature to commit to. -/
+def declaredProcSigs (T : DecodeTables) (it : Json) : List (String × EcSig) :=
+  match getStr it "kind", getStr it "path", it.getObjVal? "module" with
+  | .ok "Th_module", .ok p, .ok mJ =>
+    match getArr mJ "sig" with
+    | .ok sa =>
+      let decls := sa.toList.filterMap (fun s => (decodeSigDecl T s).toOption)
+      let names := match getArr mJ "params" with
+        | .ok pa => pa.toList.filterMap (fun q => (getIdent q "name").toOption)
+        | .error _ => []
+      if names.isEmpty then decls.map (fun d => (xqualify p d.1, d.2))
+      else
+        let applied := p ++ "(" ++ String.intercalate ", " names ++ ")"
+        decls.flatMap (fun d => [(xqualify applied d.1, d.2), (xqualify p d.1, d.2)])
+    | .error _ => []
+  | _, _, _ => []
+
+/-- The module declarations one envelope item holds, in declaration order: the
+item itself when it declares a module or a module type, and, for a `Th_theory`
+item, the module declarations among its items, theory-inner theories included. An
+inner item's path is already fully qualified (`Top.Lazy.LRO`), so the list is
+flat. -/
+def thModuleItems (j : Json) : List Json :=
+  match getStr j "kind" with
+  | .ok "Th_module" => [j]
+  | .ok "Th_modtype" => [j]
+  | .ok "Th_theory" =>
+    match _hitems : getArr j "items" with
+    | .ok arr => (arr.toList.attach.map (fun ⟨x, _⟩ => thModuleItems x)).flatten
+    | .error _ => []
+  | _ => []
+termination_by jsonSize j
+decreasing_by
+  exact getArr_decreases _hitems (Array.mem_toList_iff.mp ‹_ ∈ Array.toList _›)
+
+/-- The module declarations the theories of `items` hold, at every depth. A
+declaration `items` makes at the top level is not among them: it is registered by
+the pass over `items` itself. -/
+def thInnerModuleItems (items : List Json) : List Json :=
+  items.flatMap (fun it =>
+    match getStr it "kind" with
+    | .ok "Th_theory" => thModuleItems it
+    | _ => [])
 
 /-- Extend statement tables with one scope's items: the procedure signatures and
 globals of every item that decodes as a parameter-free module structure, the
@@ -304,31 +424,55 @@ distinct state: a shared range would make one module's footprint another's, and
 `globLocs` reads a footprint by location id alone. A module's footprint and its
 entry in the global table are decoded at the same base, so the two agree.
 
-A functor's procedures register too, at the spelling a judgement names them by
-(`functorProcSigs`). -/
+A functor's procedures register too, at the spellings a judgement names them by
+(`functorProcSigs`).
+
+Every `Th_module` item's declared signatures (`declaredProcSigs`) register
+before the bodies are decoded, and behind the signatures a decoded structure or
+functor body gives, which `checkDeclared` holds to the same array. A procedure
+calling another procedure of its own module therefore reads that procedure's
+signature while the module is being decoded, and a module whose body does not
+decode still answers a call to it at the signature the exporter declares. -/
 def surveyExtendTables (F0 : FormTables) (items : List Json) : FormTables :=
   -- The module items go in first, keyed by path. A nested alias resolves
   -- against a functor's body, and the functor may be declared after the module
   -- that nests it, so what is registered is the whole list rather than what the
   -- fold has reached.
-  let F := { F0 with tables := registerModItems F0.tables items }
-  let alloc := items.foldl
-    (fun (acc : Nat × List DecodedStructure × List (String × List EcGlobal)) it =>
-      let (next, ss, fps) := acc
+  let F0' := { F0 with tables := registerModItems F0.tables items }
+  let declSigs := items.flatMap (declaredProcSigs F0'.tables)
+  let F := { F0' with
+             tables := declSigs.foldl
+               (fun T (qs : String × EcSig) => T.withProcSig qs.1 qs.2) F0'.tables }
+  -- Globals are allocated in one pass and the bodies decoded in a second, against
+  -- a table holding every module's globals. A body that reads a sibling module's
+  -- global — an oracle writing the log a wrapper declares — needs that global's
+  -- location, and the declaring module may come later in the item list, so a
+  -- single fold decodes it against a table that does not yet hold it.
+  let galloc := items.foldl
+    (fun (acc : Nat × List (String × List EcGlobal)) it =>
+      let (next, fps) := acc
       match moduleGlobalsOf F.tables next it with
-      | .ok (p, gs) =>
-        let ss' := match decodeStructure F.tables next it with
+      | .ok (p, gs) => (next + gs.length, (p, gs) :: fps)
+      | .error _ => acc)
+    (F.nextLoc, [])
+  let footprints := galloc.2.reverse
+  let Tg := (footprints.flatMap (·.2)).foldl DecodeTables.withGlobal F.tables
+  let alloc := items.foldl
+    (fun (acc : Nat × List DecodedStructure) it =>
+      let (next, ss) := acc
+      match moduleGlobalsOf Tg next it with
+      | .ok (_, gs) =>
+        let ss' := match decodeStructure Tg next it with
                    | .ok S => S :: ss
                    | .error _ => ss
-        (next + gs.length, ss', (p, gs) :: fps)
+        (next + gs.length, ss')
       | .error _ =>
-        match decodeStructure F.tables next it with
-        | .ok S => (next + S.globals.length, S :: ss, fps)
+        match decodeStructure Tg next it with
+        | .ok S => (next + S.globals.length, S :: ss)
         | .error _ => acc)
-    (F.nextLoc, [], [])
-  let structs := alloc.2.1.reverse
-  let footprints := alloc.2.2.reverse
-  let T' := (structs.flatMap (·.globals)).foldl DecodeTables.withGlobal F.tables
+    (F.nextLoc, [])
+  let structs := alloc.2.reverse
+  let T' := (structs.flatMap (·.globals)).foldl DecodeTables.withGlobal Tg
   let fnSigs := items.flatMap (functorProcSigs F.tables F.nextLoc)
   let T'' := (structs.flatMap procSigsOfStructure ++ fnSigs).foldl
     (fun T qs => T.withProcSig qs.1 qs.2) T'
@@ -337,7 +481,7 @@ def surveyExtendTables (F0 : FormTables) (items : List Json) : FormTables :=
     | .ok p, .ok I => some (p, I)
     | _, _ => none)
   { F with tables := T''
-           procSigs := structs.flatMap procSigsOfStructure ++ fnSigs ++ F.procSigs
+           procSigs := structs.flatMap procSigsOfStructure ++ fnSigs ++ declSigs ++ F.procSigs
            modTypes := modTypes ++ F.modTypes
            modGlobals := footprints ++ F.modGlobals
            nextLoc := alloc.1 }
@@ -345,9 +489,18 @@ def surveyExtendTables (F0 : FormTables) (items : List Json) : FormTables :=
 /-- The statement tables the survey decodes `Th_axiom` items against: the
 envelope's abstract types (its `Th_type` items, theory-inner ones included,
 registered first so later items resolve their paths), then its abstract operator
-declarations, whose types name those paths, then the top-level modules and module
-types through `surveyExtendTables`. A theory's own modules and module types extend
-these at the descent into the theory, in `surveyItemLines`.
+declarations, whose types name those paths, then the modules and module types of
+the envelope's theories at every depth (`thInnerModuleItems`), then the top-level
+modules and module types, both through `surveyExtendTables`. A theory's own
+modules and module types extend these again at the descent into the theory, in
+`surveyItemLines`.
+
+A module is therefore resolvable at its fully qualified path from every scope of
+the envelope, which is what a statement naming a module of a sibling theory or of
+an inner theory reads. The theory-wide pass registers behind the top-level one and
+behind the descent's, so a path declared in more than one of them resolves to the
+declaration of the innermost scope that holds it, and the locations the descent
+allocates are disjoint from the theory-wide pass's rather than aliasing them.
 
 The envelope's items are also the scope a lemma's premises are read from
 (`FormTables.scopeItems`): an `axiom_kind: Lemma` item is stated under the
@@ -357,7 +510,8 @@ list is the scope of every item the descent reaches, and `surveyExtendTables`
 carries it through unchanged. -/
 def surveyFormTables (T : DecodeTables) (items : List Json) : FormTables :=
   let T' := registerThOperators (registerThTypes T items) items
-  surveyExtendTables (formTables T' [] (scopeItems := items)) items
+  let F := formTables T' [] (scopeItems := items)
+  surveyExtendTables (surveyExtendTables F (thInnerModuleItems items)) items
 
 /-- What a decoded item is: closed, or parametric in the realization of `ops`
 abstract operators. -/
@@ -448,8 +602,32 @@ def surveyDecodeItem (F : FormTables) (kind : String) (it : Json) :
     let _ ← decodeThClear it
     .ok .closed
   | "Th_operator" =>
-    let _ ← decodeThOperatorAbstract F.tables it
-    .ok (.param 1)
+    -- The three operator decoders in the order `registerThOperators` tries
+    -- them: a declaration without a definition is a parameter of the statements
+    -- that read it, one with a definition is a meaning the source fixes, and one
+    -- written over type parameters is held as written and expands at the read.
+    -- Reporting only the first would call an operator undecoded that the tables
+    -- in fact carry.
+    -- A notation declares surface syntax, not an operator: the exporter emits
+    -- the typed AST with notations already expanded, so no use of one reaches a
+    -- decoder and the declaration registers nothing. `registerThOperators`
+    -- already leaves the tables unchanged for it.
+    if (it.getObjVal? "decl" |>.bind (·.getObjVal? "body")
+          |>.bind (getStr · "kind")).toOption == some "OB_nott" then
+      .ok .closed
+    else
+    match decodeThOperatorAbstract F.tables it with
+    | .ok _ => .ok (.param 1)
+    | .error m =>
+      match decodeThOperatorConcrete F.tables it with
+      | .ok _ => .ok .closed
+      | .error _ =>
+        match decodeThOperatorPoly F.tables it with
+        | .ok _ => .ok .closed
+        | .error _ => .error m
+  | "Th_instance" =>
+    let _ ← decodeThInstance F.tables it
+    .ok .closed
   | "Th_axiom" =>
     -- A statement naming a subtype whose non-emptiness the ingestion assumes is
     -- parameterised by that assumption, so it is never reported as closed. The
@@ -794,15 +972,16 @@ def unqualifyEnvelopeTheory (th : String) (T : DecodeTables) : DecodeTables :=
   ([("Top.edivz", 3)] ++ theoryLocalCopies "IntDiv" [("Top.IntDiv.edivz", 1)]))
   == some 3
 
--- The ingestion's own entry for EasyCrypt's Euclidean division is keyed at the
--- path a client of `IntDiv.ec` writes, and inside that envelope it is reached at
--- the bare path the envelope writes.
-#guard (List.lookup "Top.IntDiv.edivz" ecPrelude.opPaths).isSome
-#guard (List.lookup "Top.edivz" ecPrelude.opPaths).isNone
-#guard (List.lookup "Top.edivz"
-  (unqualifyEnvelopeTheory "IntDiv" ecPrelude).opPaths).isSome
-#guard (List.lookup "Top.IntDiv.edivz"
-  (unqualifyEnvelopeTheory "IntDiv" ecPrelude).opPaths).isSome
+-- The ingestion's own entry for EasyCrypt's integer absolute value is keyed at
+-- the path a client of `CoreInt.ec` writes, the bare path that envelope writes
+-- is not a key of the corpus tables, and inside the envelope it is reached at
+-- that bare path.
+#guard (List.lookup "Top.CoreInt.absz" ecPrelude.opPaths).isSome
+#guard (List.lookup "Top.absz" ecPrelude.opPaths).isNone
+#guard (List.lookup "Top.absz"
+  (unqualifyEnvelopeTheory "CoreInt" ecPrelude).opPaths).isSome
+#guard (List.lookup "Top.CoreInt.absz"
+  (unqualifyEnvelopeTheory "CoreInt" ecPrelude).opPaths).isSome
 
 -- A theory the tables hold nothing under leaves them as they are.
 #guard (unqualifyEnvelopeTheory "Absent" ecPrelude).opPaths == ecPrelude.opPaths
@@ -1299,7 +1478,9 @@ shape `FO_UU.ec` exports for its counting functor: a `Th_module` at the path
 `Top.CountHx2` taking one module parameter and declaring the two integer
 counters `c_hu` and `c_ht`. The same shape carries the three variations the
 reader separates — the parameter list emptied, a procedure that does not decode,
-a nested module, and a `var` at a type path in no table. -/
+a nested module, and a `var` at a type path in no table. A last variation
+declares a procedure that does decode, for the cross-paths a functor's
+signatures register at. -/
 
 section ModuleFootprints
 
@@ -1467,7 +1648,191 @@ private def jFootRestr : Json :=
         let inner := surveyExtendTables outer [jFootProcFail]
         inner.modGlobals.flatMap (fun e => e.2.map (·.id)) == [2, 3, 0, 1])
 
+/-- A procedure `main` from unit to unit with an empty body. -/
+private def jFootProcMain : Json :=
+  Json.mkObj
+    [("name", Json.str "main"),
+     ("sig", Json.mkObj
+       [("args", Json.arr #[]), ("argty", jFootTyUnit), ("ret", jFootTyUnit)]),
+     ("def", Json.mkObj
+       [("kind", Json.str "FBdef"), ("locals", Json.arr #[]),
+        ("body", Json.arr #[]), ("ret", Json.null)])]
+
+/-- The declaration of that procedure, at the shape a module item's `sig` array
+carries. -/
+private def jFootProcMainDecl : Json :=
+  Json.mkObj
+    [("name", Json.str "main"),
+     ("sig", Json.mkObj
+       [("args", Json.arr #[]), ("argty", jFootTyUnit), ("ret", jFootTyUnit)])]
+
+/-- A functor over one parameter, declaring no variable, whose body defines
+`main` and whose signature declares it. -/
+private def jFootFunctorProc : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_module"), ("name", Json.str "CountHx2"),
+     ("path", Json.str "Top.CountHx2"),
+     ("module", Json.mkObj
+       [("name", Json.str "CountHx2"), ("params", Json.arr #[jFootParam]),
+        ("body", Json.mkObj
+          [("kind", Json.str "ME_Structure"), ("modules", Json.arr #[]),
+           ("vars", Json.arr #[]), ("procs", Json.arr #[jFootProcMain])]),
+        ("sig", Json.arr #[jFootProcMainDecl])])]
+
+-- A functor's procedure registers at two paths: the functor applied to its
+-- formal parameters, and the functor's path with the argument group dropped.
+#guard (functorProcSigs ecPrelude 0 jFootFunctorProc).map Prod.fst
+  == ["Top.CountHx2(H)./main", "Top.CountHx2./main"]
+
+-- The entry without the argument group answers an application naming other
+-- modules, which `procSigOf` resolves through the call's head path.
+#guard (let F := surveyExtendTables (formTables ecPrelude []) [jFootFunctorProc]
+        (procSigOf F "Top.CountHx2(Top.Absent)./main").toOption.isSome)
+
+-- A functor's declared signatures carry the same two spellings.
+#guard (declaredProcSigs ecPrelude jFootFunctorProc).map Prod.fst
+  == ["Top.CountHx2(H)./main", "Top.CountHx2./main"]
+
+/-- The declaration of a procedure `init` from unit to unit, at the shape a
+module item's `sig` array carries. -/
+private def jFootProcInitDecl : Json :=
+  Json.mkObj
+    [("name", Json.str "init"),
+     ("sig", Json.mkObj
+       [("args", Json.arr #[]), ("argty", jFootTyUnit), ("ret", jFootTyUnit)])]
+
+/-- A module taking no parameter whose body's procedure does not decode and whose
+signature declares that procedure. -/
+private def jFootDeclOnly : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_module"), ("name", Json.str "CountHx2"),
+     ("path", Json.str "Top.CountHx2"),
+     ("module", Json.mkObj
+       [("name", Json.str "CountHx2"), ("params", Json.arr #[]),
+        ("body", Json.mkObj
+          [("kind", Json.str "ME_Structure"), ("modules", Json.arr #[]),
+           ("vars", Json.arr #[]), ("procs", Json.arr #[jFootProcAbsentGlobal])]),
+        ("sig", Json.arr #[jFootProcInitDecl])])]
+
+/-- The same item with its declared procedure returning at a type path in no
+table. -/
+private def jFootDeclAbsentTy : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_module"), ("name", Json.str "CountHx2"),
+     ("path", Json.str "Top.CountHx2"),
+     ("module", Json.mkObj
+       [("name", Json.str "CountHx2"), ("params", Json.arr #[]),
+        ("body", Json.mkObj
+          [("kind", Json.str "ME_Structure"), ("modules", Json.arr #[]),
+           ("vars", Json.arr #[]), ("procs", Json.arr #[])]),
+        ("sig", Json.arr
+          #[Json.mkObj
+              [("name", Json.str "init"),
+               ("sig", Json.mkObj
+                 [("args", Json.arr #[]), ("argty", jFootTyUnit),
+                  ("ret", Json.mkObj
+                    [("kind", Json.str "Tconstr"),
+                     ("path", Json.str "Top.PROM.flag"),
+                     ("args", Json.arr #[])])])]])])]
+
+-- The body's procedure reads a global of a module the tables do not carry, so
+-- the structure does not decode and registers no signature.
+#guard (decodeStructure ecPrelude 0 jFootDeclOnly).toOption.isNone
+
+-- The declared signature is registered all the same, at the path a call names
+-- the procedure by.
+#guard (declaredProcSigs ecPrelude jFootDeclOnly).map Prod.fst
+  == ["Top.CountHx2./init"]
+
+#guard (let F := surveyExtendTables (formTables ecPrelude []) [jFootDeclOnly]
+        (procSigOf F "Top.CountHx2./init").toOption.isSome
+          && (procSigOf F "Top.CountHx2./absent").toOption.isNone)
+
+-- A signature at a type the ingestion has no image for is not registered.
+#guard (declaredProcSigs ecPrelude jFootDeclAbsentTy).isEmpty
+
+-- An item that declares no module declares no signature.
+#guard (declaredProcSigs ecPrelude jFootRestr).isEmpty
+
 end ModuleFootprints
+
+/-! ### Module visibility across theory scopes
+
+The checks below run the envelope-wide module pass on a two-theory envelope: one
+theory declaring a module with a `var` and a procedure, and one declaring
+nothing. They pin which items the pass collects, that the module's signature and
+footprint are readable from the envelope's tables, and that a descent into the
+declaring theory keeps its own registration in front of the envelope-wide one. -/
+
+section TheoryScopes
+
+/-- A `Th_module` item inside the theory `Top.S`: a module declaring one integer
+`var` and the procedure `main`. -/
+private def jScopeSibModule : Json :=
+  Json.mkObj
+    [("kind", Json.str "Th_module"), ("name", Json.str "N"),
+     ("path", Json.str "Top.S.N"),
+     ("module", Json.mkObj
+       [("name", Json.str "N"), ("params", Json.arr #[]),
+        ("body", Json.mkObj
+          [("kind", Json.str "ME_Structure"), ("modules", Json.arr #[]),
+           ("vars", Json.arr #[jFootVar "c" jFootTyInt]),
+           ("procs", Json.arr #[jFootProcMain])]),
+        ("sig", Json.arr #[jFootProcMainDecl])])]
+
+/-- The theory `Top.S`, holding that module. -/
+private def jScopeSibTheory : Json :=
+  Json.mkObj [("kind", Json.str "Th_theory"), ("name", Json.str "S"),
+              ("path", Json.str "Top.S"), ("mode", Json.str "concrete"),
+              ("source", Json.null),
+              ("items", Json.arr #[jScopeSibModule])]
+
+/-- The theory `Top.U`, holding no declaration of its own. -/
+private def jScopeOtherTheory : Json :=
+  Json.mkObj [("kind", Json.str "Th_theory"), ("name", Json.str "U"),
+              ("path", Json.str "Top.U"), ("mode", Json.str "concrete"),
+              ("source", Json.null), ("items", Json.arr #[])]
+
+/-- The two theories as one envelope. -/
+private def jScopeItems : List Json :=
+  [jScopeSibTheory, jScopeOtherTheory]
+
+-- A theory item collects the module declarations among its items, at their fully
+-- qualified paths.
+#guard (thModuleItems jScopeSibTheory).filterMap (fun it => (getStr it "path").toOption)
+  == ["Top.S.N"]
+
+-- An item that declares no module contributes none.
+#guard thModuleItems jSurveyThType == []
+
+-- The theory-wide pass reaches a module a theory declares.
+#guard (thInnerModuleItems jScopeItems).filterMap
+    (fun it => (getStr it "path").toOption)
+  == ["Top.S.N"]
+
+-- A top-level declaration is left to the pass over the envelope's own items.
+#guard thInnerModuleItems [jFootFunctorProc] == []
+
+-- The module's signature and footprint are in the envelope's tables, so a
+-- statement of the sibling theory `Top.U` reads them at the qualified path.
+#guard (let F := surveyFormTables ecPrelude jScopeItems
+        (procSigOf F "Top.S.N./main").toOption.isSome
+          && (List.lookup "Top.S.N" F.modGlobals).isSome)
+
+-- A path the envelope declares nothing at stays unknown.
+#guard (let F := surveyFormTables ecPrelude jScopeItems
+        (procSigOf F "Top.S.Absent./main").toOption.isNone
+          && (List.lookup "Top.S.Absent" F.modGlobals).isNone)
+
+-- The descent into the declaring theory registers the module again, in front of
+-- the envelope-wide entry and at locations of its own: the footprint a scope of
+-- `Top.S` reads is the descent's, and the envelope-wide entry is still behind it.
+#guard (let F := surveyFormTables ecPrelude jScopeItems
+        let F' := surveyExtendTables F [jScopeSibModule]
+        (List.lookup "Top.S.N" F'.modGlobals).map (·.map (·.id)) == some [F.nextLoc]
+          && (F'.modGlobals.filter (·.1 == "Top.S.N")).length == 2)
+
+end TheoryScopes
 
 /-! ### The directory mode's line shapes
 

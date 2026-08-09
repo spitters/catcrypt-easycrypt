@@ -121,7 +121,7 @@ theorem otpLocs_eq_globLocs : globLocs otpModule.globals = otpLocs := by
 theorem kGlobal_mem_otpLocs : kLoc.id ∈ otpLocs := Finset.mem_singleton_self _
 
 /-- The lowered module: a record of `SPComp` procedures sharing `Otp.k`. -/
-noncomputable def otpImpl : ModuleImpl otpInterface := lowerModule ProcEnv.empty 0 otpModule
+noncomputable def otpImpl : ModuleImpl otpInterface := lowerModule ProcEnv.empty OpEnv.empty 0 otpModule
 
 /-! ## The adversary interface -/
 
@@ -169,7 +169,7 @@ noncomputable def expEnv (A : ModuleImpl advInterface) : ProcEnv :=
 /-- The experiment as a family indexed by the adversary module: the imported
 form of `Exp(A)`, universally quantified over `A` in the statements below. -/
 noncomputable def expImport (A : ModuleImpl advInterface) (m : Bool) : SPComp Bool :=
-  lowerGame (expEnv A) (expGame m) 0
+  lowerGame (expEnv A) OpEnv.empty (expGame m) 0
 
 /-! ## The functor -/
 
@@ -192,7 +192,7 @@ def flipFunctor : EcFunctor where
 
 /-- The functor as a Lean function on module records. -/
 noncomputable def flipImpl (A : ModuleImpl advInterface) : ModuleImpl advInterface :=
-  lowerFunctor ProcEnv.empty 0 flipFunctor A
+  lowerFunctor ProcEnv.empty OpEnv.empty 0 flipFunctor A
 
 /-! ## Closed forms of the lowered procedures -/
 
@@ -208,7 +208,7 @@ theorem otpImpl_init (u : Unit) :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sample .bool "k", EcStmt.store kGlobal (EcExpr.var .bool "k")]
-        (emptyEnv.update "u" ⟨EcTy.unit, u⟩))
+        ((emptyEnv OpEnv.empty).update "u" ⟨EcTy.unit, u⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.lit (t := .unit) ()) env)) = _
   simp only [lowerStmts_sample, lowerStmts_store_finLoc (g := kGlobal) (hfin := rfl),
     lowerStmts_nil, sampleFin_bool, SPComp.bind_assoc, SPComp.pure_bind, evalExpr]
@@ -219,7 +219,7 @@ theorem otpImpl_enc (a : Bool) :
       = SPComp.bind (SPComp.get kLoc) (fun k => SPComp.pure (xor k a)) := by
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0 [EcStmt.load kGlobal "k"]
-        (emptyEnv.update "m" ⟨EcTy.bool, a⟩))
+        ((emptyEnv OpEnv.empty).update "m" ⟨EcTy.bool, a⟩))
       (fun env => SPComp.pure
         (evalExpr (EcExpr.bxor (EcExpr.var .bool "k") (EcExpr.var .bool "m")) env)) = _
   simp only [lowerStmts_load_finLoc (g := kGlobal) (hfin := rfl), lowerStmts_nil,
@@ -232,7 +232,7 @@ theorem otpImpl_clear (u : Unit) :
       = SPComp.bind (SPComp.set kLoc false) (fun _ => SPComp.pure ()) := by
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0 [EcStmt.store kGlobal (EcExpr.lit (t := .bool) false)]
-        (emptyEnv.update "u" ⟨EcTy.unit, u⟩))
+        ((emptyEnv OpEnv.empty).update "u" ⟨EcTy.unit, u⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.lit (t := .unit) ()) env)) = _
   simp only [lowerStmts_store_finLoc (g := kGlobal) (hfin := rfl), lowerStmts_nil,
     SPComp.bind_assoc, SPComp.pure_bind, evalExpr]
@@ -244,7 +244,7 @@ theorem flipImpl_guess (A : ModuleImpl advInterface) (c : Bool) :
   show SPComp.bind
       (lowerStmts (ProcEnv.empty.bindModule "A" A) [] 0
         [EcStmt.callProc (qualify "A" "guess") ⟨.bool, .bool⟩ (EcExpr.var .bool "c") "b"]
-        (emptyEnv.update "c" ⟨EcTy.bool, c⟩))
+        ((emptyEnv OpEnv.empty).update "c" ⟨EcTy.bool, c⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.bnot (EcExpr.var .bool "b")) env)) = _
   simp only [lowerStmts_callProc, lowerStmts_nil, SPComp.bind_assoc, SPComp.pure_bind,
     evalExpr, Env.read_update_same]

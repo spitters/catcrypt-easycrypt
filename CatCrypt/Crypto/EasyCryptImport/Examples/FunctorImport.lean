@@ -169,7 +169,7 @@ private def isNotOfVar {t : EcTy} (e : EcExpr t) (x : String) : Bool :=
 
 /-- The lowered module: two `SPComp` procedures sharing the location `Otp.k`. -/
 noncomputable def otpImpl : ModuleImpl otpInterface :=
-  lowerModule ProcEnv.empty 0 otpModule
+  lowerModule ProcEnv.empty OpEnv.empty 0 otpModule
 
 theorem otpImpl_gen :
     otpImpl.proc "gen" ()
@@ -178,7 +178,7 @@ theorem otpImpl_gen :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sample .bool "kk", EcStmt.store kGlobal (EcExpr.var .bool "kk")]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "kk") env)) = _
   simp only [lowerStmts_sample, lowerStmts_store_finLoc (g := kGlobal) (hfin := rfl),
     lowerStmts_nil, sampleFin_bool, SPComp.bind_assoc, SPComp.pure_bind, evalExpr,
@@ -191,7 +191,7 @@ theorem otpImpl_wipe :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.store kGlobal (EcExpr.lit (t := .bool) false)]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.lit (t := .bool) false) env)) = _
   simp only [lowerStmts_store_finLoc (g := kGlobal) (hfin := rfl), lowerStmts_nil,
     SPComp.bind_assoc, SPComp.pure_bind, evalExpr]
@@ -309,11 +309,11 @@ noncomputable def expEnv (A : ModuleImpl advInterface) : ProcEnv :=
 /-- `Neg(A)`, the inner functor image: the functor applied to the module the
 environment offers under the binder's name. -/
 noncomputable def negImpl (A : ModuleImpl advInterface) : ModuleImpl advInterface :=
-  lowerFunctorX (expEnv A) 0 negFunctor ((expEnv A).moduleX "A" advInterface)
+  lowerFunctorX (expEnv A) OpEnv.empty 0 negFunctor ((expEnv A).moduleX "A" advInterface)
 
 /-- `Exp(Neg(A)).main`, the procedure the statement names. -/
 noncomputable def expNegImpl (A : ModuleImpl advInterface) : SPComp Bool :=
-  (lowerFunctorX (expEnv A) 0 expFunctor (negImpl A)).proc "main" ()
+  (lowerFunctorX (expEnv A) OpEnv.empty 0 expFunctor (negImpl A)).proc "main" ()
 
 /-! ## Call resolution -/
 
@@ -345,7 +345,7 @@ theorem negImpl_guess (A : ModuleImpl advInterface) (c : Bool) :
   show SPComp.bind
       (lowerStmts ((expEnv A).bindModuleX "P" ((expEnv A).moduleX "A" advInterface)) [] 0
         [EcStmt.callProc (xqualify "P" "guess") ⟨.bool, .bool⟩ (EcExpr.var .bool "c") "b"]
-        (emptyEnv.update "c" ⟨EcTy.bool, c⟩))
+        ((emptyEnv OpEnv.empty).update "c" ⟨EcTy.bool, c⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.bnot (EcExpr.var .bool "b")) env)) = _
   simp only [lowerStmts_callProc, lowerStmts_nil, SPComp.bind_assoc, SPComp.pure_bind,
     negEnv_guess, evalExpr, Env.read_update_same]
@@ -368,7 +368,7 @@ theorem expNegImpl_eq (A : ModuleImpl advInterface) :
             (EcExpr.var .bool "kk") "b",
           EcStmt.callProc (xqualify "Top.Otp" "wipe") ⟨.unit, .bool⟩
             (EcExpr.lit (t := .unit) ()) "z" ]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "b") env)) = _
   simp only [lowerStmts_callProc, lowerStmts_nil, expEnv_gen, expEnv_wipe, expEnv_param,
     otpImpl_gen, otpImpl_wipe, negImpl_guess, evalExpr, EcTy.interp, SPComp.bind_assoc,
@@ -447,8 +447,8 @@ noncomputable def expImages : String → ProcEnv → ProcEnv := fun name ρ =>
   if name = "A" then
     ρ.bindProc expNegPath (s := expMainSig)
       (fun _ =>
-        (lowerFunctorX ρ 0 expFunctor
-            (lowerFunctorX ρ 0 negFunctor (ρ.moduleX "A" advInterface))).proc "main" ())
+        (lowerFunctorX ρ OpEnv.empty 0 expFunctor
+            (lowerFunctorX ρ OpEnv.empty 0 negFunctor (ρ.moduleX "A" advInterface))).proc "main" ())
   else ρ
 
 /-- The imported statement of `exp_neg_ll`, as a goal. -/

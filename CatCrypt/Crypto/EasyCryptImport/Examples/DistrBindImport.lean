@@ -91,8 +91,8 @@ private def distrBindExport : Json :=
 
 /-- The lowering of a closed game, with its three fields exposed. -/
 private theorem lowerClosedGame_eq (g : EcGame) :
-    lowerClosedGame g
-      = SPComp.bind (lowerStmts ProcEnv.empty g.procs 0 g.body emptyEnv)
+    lowerClosedGame OpEnv.empty g
+      = SPComp.bind (lowerStmts ProcEnv.empty g.procs 0 g.body (emptyEnv OpEnv.empty))
           (fun env => SPComp.pure (evalExpr g.ret env)) := rfl
 
 /-! ## The two games at one source name -/
@@ -179,13 +179,13 @@ The statement quantifies over the binder's source name, so it covers the name th
 program variable `b` already carries: the binder's rebinding does not reach the
 body's occurrence of the program variable. -/
 theorem lowerClosedGame_freeGame (k : EcVarId) (hk : k.stamp.isSome) :
-    lowerClosedGame (freeGame k) = SPComp.pure true := by
+    lowerClosedGame OpEnv.empty (freeGame k) = SPComp.pure true := by
   rw [lowerClosedGame_eq]
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.assign .bool "b" (EcExpr.lit (t := .bool) true),
          EcStmt.sampleD .bool "y"
-           (EcDistr.map (EcDistr.uniform .bool) k (EcExpr.var .bool "b"))] emptyEnv)
+           (EcDistr.map (EcDistr.uniform .bool) k (EcExpr.var .bool "b"))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "y") env)) = SPComp.pure true
   rw [lowerStmts_assign, lowerStmts_sampleD, evalDistr_freeDistr k hk]
   simp only [lowerStmts_nil, sampleFrom_pure, SPComp.pure_bind, evalExpr,
@@ -193,13 +193,13 @@ theorem lowerClosedGame_freeGame (k : EcVarId) (hk : k.stamp.isSome) :
 
 /-- **The imported `Bound` is a uniform bit.** -/
 theorem lowerClosedGame_boundGame (k : EcVarId) :
-    lowerClosedGame (boundGame k) = SPComp.sample Bool := by
+    lowerClosedGame OpEnv.empty (boundGame k) = SPComp.sample Bool := by
   rw [lowerClosedGame_eq]
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.assign .bool "b" (EcExpr.lit (t := .bool) true),
          EcStmt.sampleD .bool "y"
-           (EcDistr.map (EcDistr.uniform .bool) k (EcExpr.var .bool k))] emptyEnv)
+           (EcDistr.map (EcDistr.uniform .bool) k (EcExpr.var .bool k))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "y") env)) = SPComp.sample Bool
   rw [lowerStmts_assign, lowerStmts_sampleD, evalDistr_boundDistr k,
     sampleFrom_evalDistr_uniform]
@@ -208,13 +208,13 @@ theorem lowerClosedGame_boundGame (k : EcVarId) :
 
 /-- The imported `Free` returns `true` with probability one. -/
 theorem prTrue_freeGame (k : EcVarId) (hk : k.stamp.isSome) (h : Heap) :
-    prTrue (lowerClosedGame (freeGame k)) h = 1 := by
+    prTrue (lowerClosedGame OpEnv.empty (freeGame k)) h = 1 := by
   rw [lowerClosedGame_freeGame k hk, prTrue_pure_bool]
   simp
 
 /-- The imported `Bound` returns `true` with probability one half. -/
 theorem prTrue_boundGame (k : EcVarId) (h : Heap) :
-    prTrue (lowerClosedGame (boundGame k)) h = 2⁻¹ := by
+    prTrue (lowerClosedGame OpEnv.empty (boundGame k)) h = 2⁻¹ := by
   rw [lowerClosedGame_boundGame k, ← sampleFrom_uniform Bool,
     NonUniform.prTrue_sampleFrom, SDistr.uniform_apply_some]
   norm_num [Fintype.card_bool]
@@ -225,12 +225,12 @@ every source name they mention and differ only in which identifier the body's
 occurrence is. A valuation keyed by source names alone identifies them; this
 disequality is what that identification would contradict. -/
 theorem freeGame_shadowed_ne_boundGame (s : Nat) :
-    lowerClosedGame (freeGame ⟨"b", some s⟩)
-      ≠ lowerClosedGame (boundGame ⟨"b", some s⟩) := by
+    lowerClosedGame OpEnv.empty (freeGame ⟨"b", some s⟩)
+      ≠ lowerClosedGame OpEnv.empty (boundGame ⟨"b", some s⟩) := by
   intro heq
-  have h1 : prTrue (lowerClosedGame (freeGame ⟨"b", some s⟩)) Heap.empty = 1 :=
+  have h1 : prTrue (lowerClosedGame OpEnv.empty (freeGame ⟨"b", some s⟩)) Heap.empty = 1 :=
     prTrue_freeGame _ rfl Heap.empty
-  have h2 : prTrue (lowerClosedGame (boundGame ⟨"b", some s⟩)) Heap.empty = 2⁻¹ :=
+  have h2 : prTrue (lowerClosedGame OpEnv.empty (boundGame ⟨"b", some s⟩)) Heap.empty = 2⁻¹ :=
     prTrue_boundGame _ Heap.empty
   rw [heq, h2] at h1
   exact absurd h1 (by norm_num)
@@ -238,7 +238,7 @@ theorem freeGame_shadowed_ne_boundGame (s : Nat) :
 /-- The imported `Free` does not depend on the source name its binder carries. -/
 theorem lowerClosedGame_freeGame_rename (k k' : EcVarId)
     (hk : k.stamp.isSome) (hk' : k'.stamp.isSome) :
-    lowerClosedGame (freeGame k) = lowerClosedGame (freeGame k') := by
+    lowerClosedGame OpEnv.empty (freeGame k) = lowerClosedGame OpEnv.empty (freeGame k') := by
   rw [lowerClosedGame_freeGame k hk, lowerClosedGame_freeGame k' hk']
 
 /-! ## The bind -/
@@ -276,19 +276,19 @@ def bindAsMapGame (k : EcVarId) : EcGame where
 one `SPComp Bool`, which is the EasyCrypt definition `dmap d f = dlet d (dunit \o f)`
 at the level of imported programs. -/
 theorem lowerClosedGame_bindGame (k : EcVarId) :
-    lowerClosedGame (bindGame k) = lowerClosedGame (bindAsMapGame k) := by
+    lowerClosedGame OpEnv.empty (bindGame k) = lowerClosedGame OpEnv.empty (bindAsMapGame k) := by
   rw [lowerClosedGame_eq, lowerClosedGame_eq]
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sampleD .bool "x"
           (EcDistr.letD (EcDistr.uniform .bool) k
-            (EcDistr.point (EcExpr.bnot (EcExpr.var .bool k))))] emptyEnv)
+            (EcDistr.point (EcExpr.bnot (EcExpr.var .bool k))))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env))
     = SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sampleD .bool "x"
           (EcDistr.map (EcDistr.uniform .bool) k
-            (EcExpr.bnot (EcExpr.var .bool k)))] emptyEnv)
+            (EcExpr.bnot (EcExpr.var .bool k)))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env))
   rw [lowerStmts_sampleD, lowerStmts_sampleD, evalDistr_letD_point]
 
@@ -313,13 +313,13 @@ theorem evalDistr_bindDistr (k : EcVarId) (env : Env) :
 /-- The imported `Bind` is a uniform bit: negating a uniform bit is a uniform
 bit. -/
 theorem lowerClosedGame_bindGame_eq_sample (k : EcVarId) :
-    lowerClosedGame (bindGame k) = SPComp.sample Bool := by
+    lowerClosedGame OpEnv.empty (bindGame k) = SPComp.sample Bool := by
   rw [lowerClosedGame_eq]
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sampleD .bool "x"
           (EcDistr.letD (EcDistr.uniform .bool) k
-            (EcDistr.point (EcExpr.bnot (EcExpr.var .bool k))))] emptyEnv)
+            (EcDistr.point (EcExpr.bnot (EcExpr.var .bool k))))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env)) = SPComp.sample Bool
   rw [lowerStmts_sampleD, evalDistr_bindDistr k, sampleFrom_evalDistr_uniform]
   simp only [lowerStmts_nil, SPComp.bind_assoc, SPComp.pure_bind, evalExpr,
@@ -350,13 +350,13 @@ def productGame : EcGame where
 /-- **The imported `Product` is the constant `true`.** The first component is drawn
 from a point mass and the second, which the game discards, from a total
 distribution. -/
-theorem lowerClosedGame_productGame : lowerClosedGame productGame = SPComp.pure true := by
+theorem lowerClosedGame_productGame : lowerClosedGame OpEnv.empty productGame = SPComp.pure true := by
   rw [lowerClosedGame_eq]
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sampleD (.prod .bool .bool) "p"
           (EcDistr.prod (EcDistr.point (EcExpr.lit (t := .bool) true))
-            (EcDistr.uniform .bool))] emptyEnv)
+            (EcDistr.uniform .bool))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure
         (evalExpr (EcExpr.fst (a := .bool) (b := .bool)
           (EcExpr.var (.prod .bool .bool) "p")) env)) = SPComp.pure true
@@ -402,19 +402,19 @@ theorem evalDistr_scaledDistr (k : EcVarId) (env : Env) :
 /-- **The imported `Scaled` is the constant `true`.** The restriction keeps the
 single outcome the predicate admits, and the rescaling gives it the whole mass. -/
 theorem lowerClosedGame_scaledGame (k : EcVarId) :
-    lowerClosedGame (scaledGame k) = SPComp.pure true := by
+    lowerClosedGame OpEnv.empty (scaledGame k) = SPComp.pure true := by
   rw [lowerClosedGame_eq]
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sampleD .bool "x"
           (EcDistr.scale (EcDistr.restrict (EcDistr.uniform .bool) k
-            (EcExpr.var .bool k)))] emptyEnv)
+            (EcExpr.var .bool k)))] (emptyEnv OpEnv.empty))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "x") env)) = SPComp.pure true
   have hcond :
-      evalDistr (EcDistr.cond (EcDistr.uniform .bool) k (EcExpr.var .bool k)) emptyEnv
+      evalDistr (EcDistr.cond (EcDistr.uniform .bool) k (EcExpr.var .bool k)) (emptyEnv OpEnv.empty)
         = SDistr.pure true :=
     NonUniformImport.evalDistr_cond_uniform_eq_pure .bool rfl k
-      (EcExpr.var .bool k) emptyEnv true
+      (EcExpr.var .bool k) (emptyEnv OpEnv.empty) true
       (fun b hb => by simpa [evalExpr, Env.read_update_same] using hb)
       (by simp [evalExpr, Env.read_update_same])
   rw [lowerStmts_sampleD, evalDistr_scaledDistr, hcond]

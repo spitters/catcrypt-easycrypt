@@ -118,7 +118,7 @@ def otpGameNamed (nm : String) (m : Bool) : EcGame where
 /-- The source name is provenance: a named game lowers to the computation
 `OTPImport.otpGame` lowers to. -/
 theorem lowerClosedGame_otpGameNamed (nm : String) (m : Bool) :
-    lowerClosedGame (otpGameNamed nm m) = lowerClosedGame (otpGame m) := rfl
+    lowerClosedGame OpEnv.empty (otpGameNamed nm m) = lowerClosedGame OpEnv.empty (otpGame m) := rfl
 
 -- `OTP0` decodes to the game at message `false`.
 #guard (match importGame ecPrelude "OTP0" otpEquivExport with
@@ -236,9 +236,9 @@ paths the export names them by. -/
 /-- The environment the imported statements resolve against. -/
 noncomputable def otpEnv : ProcEnv :=
   (ProcEnv.empty.bindProc "Top.OTP0./main" (s := mainSig)
-      (fun _ => lowerClosedGame (otpGameNamed "OTP0" false))).bindProc
+      (fun _ => lowerClosedGame OpEnv.empty (otpGameNamed "OTP0" false))).bindProc
     "Top.OTP1./main" (s := mainSig)
-      (fun _ => lowerClosedGame (otpGameNamed "OTP1" true))
+      (fun _ => lowerClosedGame OpEnv.empty (otpGameNamed "OTP1" true))
 
 /-! ## The goal, and its proof -/
 
@@ -249,7 +249,7 @@ noncomputable def otpEquivGoal : Prop := importedProp otpEnv otpEquivForm
 the trivial precondition the source writes and equality of the two results. -/
 theorem otpEquivGoal_eq :
     otpEquivGoal
-      = pRHL truePre (lowerClosedGame (otpGame false)) (lowerClosedGame (otpGame true))
+      = pRHL truePre (lowerClosedGame OpEnv.empty (otpGame false)) (lowerClosedGame OpEnv.empty (otpGame true))
           (fun r₁ (_ : Heap) r₂ (_ : Heap) => r₁ = r₂) :=
   rfl
 
@@ -257,7 +257,7 @@ theorem otpEquivGoal_eq :
 the message, so `xor`-by-`(m₀ ^ m₁)` couples the two runs and the two results
 agree. -/
 theorem otpImport_coupling_true (m₀ m₁ : Bool) :
-    pRHL truePre (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁))
+    pRHL truePre (lowerClosedGame OpEnv.empty (otpGame m₀)) (lowerClosedGame OpEnv.empty (otpGame m₁))
       (fun r₁ (_ : Heap) r₂ (_ : Heap) => r₁ = r₂) := by
   rw [lowerGame_otpGame, lowerGame_otpGame]
   refine rHoare_bij_step (boolXorBij (xor m₀ m₁)) fun a => rHoare_ret fun _ _ _ => ?_
@@ -266,7 +266,7 @@ theorem otpImport_coupling_true (m₀ m₁ : Bool) :
 /-- The lowered game modifies no heap location: it samples a key and returns a
 value, and neither step writes. -/
 theorem preservesOutside_lowerClosedGame_otpGame (m : Bool) :
-    PreservesOutside (lowerClosedGame (otpGame m)) ∅ := by
+    PreservesOutside (lowerClosedGame OpEnv.empty (otpGame m)) ∅ := by
   rw [lowerGame_otpGame]
   simpa using
     preservesOutside_bind (preservesOutside_sample Bool)
@@ -277,7 +277,7 @@ games modify nothing, so `Relational.r_frame_of_preservesNothing` carries `Φ`
 from the initial pair of memories to the final pair and conjoins it to the
 postcondition of the coupling at `truePre`. -/
 theorem otpImport_coupling_gen (Φ : RPre) (m₀ m₁ : Bool) :
-    pRHL Φ (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁))
+    pRHL Φ (lowerClosedGame OpEnv.empty (otpGame m₀)) (lowerClosedGame OpEnv.empty (otpGame m₁))
       (fun r₁ h₁ r₂ h₂ => r₁ = r₂ ∧ Φ h₁ h₂) :=
   r_frame_of_preservesNothing
     (preservesOutside_lowerClosedGame_otpGame m₀)
@@ -288,7 +288,7 @@ theorem otpImport_coupling_gen (Φ : RPre) (m₀ m₁ : Bool) :
 statement, definitionally: `eqPost` is equality of results conjoined with
 `eqPre` of the two final memories. -/
 theorem otpImport_coupling_of_gen (m₀ m₁ : Bool) :
-    pRHL eqPre (lowerClosedGame (otpGame m₀)) (lowerClosedGame (otpGame m₁)) eqPost :=
+    pRHL eqPre (lowerClosedGame OpEnv.empty (otpGame m₀)) (lowerClosedGame OpEnv.empty (otpGame m₁)) eqPost :=
   otpImport_coupling_gen eqPre m₀ m₁
 
 /-- The imported goal, closed: the translation of the exported `equiv` lemma

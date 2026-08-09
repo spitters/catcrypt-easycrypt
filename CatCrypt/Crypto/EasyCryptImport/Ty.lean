@@ -20,9 +20,11 @@ and `Nonempty` instances. Decidable equality and countability are predicates
 on codes rather than universal instances: `EcTy.hasEq` marks the codes that
 have both — everything without a distribution inside — and `decEqOfHasEq` /
 `countableOfHasEq` produce the instances from a proof. Both are computable, so
-evaluation stays computable: `evalExpr` branches on a code's `hasEq` where it
-compares values rather than taking a classical instance, which is what the
-`#guard` checks of the golden fixtures need. Countability is what a
+`evalExpr` branches on a code's `hasEq` where it compares values rather than
+taking a classical instance. `evalExpr` itself is `noncomputable`: `EcTy.fset`
+interprets as `Finset`, a quotient, and reading its elements as a list needs an
+order the element type does not carry — `hasEq` supplies `Countable`, not the
+`Encodable` a computable listing would need. Countability is what a
 `CatCrypt.Core.GLocation` (a heap cell holding a countable value) requires, so
 a global lives at a `hasEq` code and `EcGlobal` carries the proof. At a closed
 code the standard instances also resolve directly, since `EcTy.interp` is
@@ -541,6 +543,91 @@ def EcTy.mapFind {a b : EcTy}
 def EcTy.mapSet {a b : EcTy} (m : (EcTy.map a b).interp) (k : a.interp)
     (v : b.interp) : (EcTy.map a b).interp := (k, v) :: m
 
+/-- `m` with every binding of `k` removed, EasyCrypt's `rem`. -/
+def EcTy.mapRem {a b : EcTy} (m : (EcTy.map a b).interp) (k : a.interp)
+    (hEq : a.hasEq = true := by rfl) : (EcTy.map a b).interp :=
+  letI := decEqOfHasEq a hEq
+  (show List (a.interp × b.interp) from m).filter (fun kv => !(kv.1 = k))
+
+/-- The reading `FMap.ec` gives `rem`, as its own lemma `remE` states it: a
+lookup after removing `k` answers nothing at `k` and is unchanged elsewhere. -/
+theorem EcTy.mapFind_mapRem {a b : EcTy} (m : (EcTy.map a b).interp)
+    (k y : a.interp) (hEq : a.hasEq = true) :
+    letI := decEqOfHasEq a hEq
+    EcTy.mapFind (a := a) (b := b) (EcTy.mapRem (a := a) (b := b) m k hEq) y hEq
+      = if y = k then none else EcTy.mapFind (a := a) (b := b) m y hEq := by
+  letI := decEqOfHasEq a hEq
+  induction (show List (a.interp × b.interp) from m) with
+  | nil => simp [EcTy.mapRem, EcTy.mapFind]
+  | cons kv t ih =>
+      obtain ⟨k', v⟩ := kv
+      by_cases hk : k' = k <;> by_cases hy : y = k <;>
+        by_cases hky : k' = y <;>
+        simp_all [EcTy.mapRem, EcTy.mapFind]
+
+/-- The elements of a finite set as a list, EasyCrypt's `elems`.
+
+`FSet.ec` declares `elems` abstractly and constrains it by `elemsK`
+(`oflist (elems s) = s`), `uniq_elems`, and `oflistK`, which fixes
+`elems (oflist s)` only up to permutation. The source therefore does not
+determine the order, and this fixes one, as the `fin n` cardinality and `oget`'s
+default fix values EasyCrypt leaves open.
+
+It is `noncomputable` because `EcTy.fset` interprets as `Finset`, a quotient, and
+no order on the element type is available: `hasEq` supplies `Countable`, not the
+`Encodable` a computable listing would need. -/
+noncomputable def EcTy.fsetElems {a : EcTy} (s : (EcTy.fset a).interp) :
+    (EcTy.list a).interp :=
+  (show Finset a.interp from s).toList
+
+/-- A list of `n` independent samples from `d`, EasyCrypt's `dlist d n`.
+
+`DList.ec` characterises it by two lemmas: `dlist0`, that a non-positive count
+gives the point mass at the empty list, and `dlistS`, that `dlist d (n + 1)` is
+the cons image of the independent product of `d` with `dlist d n`. The recursion
+below is those two equations, with the product written as the bind that does not
+read its first component — which is what independence is. `Int.toNat` sends every
+non-positive count to zero, so `dlist0`'s guard needs no arm of its own. -/
+noncomputable def EcTy.distrList {a : EcTy} (d : (EcTy.distr a).interp) (n : Int) :
+    (EcTy.distr (EcTy.list a)).interp :=
+  let rec go : Nat → CatCrypt.Prob.SDistr (List a.interp)
+    | 0 => CatCrypt.Prob.SDistr.pure []
+    | k + 1 =>
+        CatCrypt.Prob.SDistr.bind (show CatCrypt.Prob.SDistr a.interp from d)
+          (fun x => CatCrypt.Prob.SDistr.bind (go k)
+            (fun xs => CatCrypt.Prob.SDistr.pure (x :: xs)))
+  go n.toNat
+
+/-- Two lists paired position by position, EasyCrypt's `zip`. `List.ec` defines
+it by recursion on both, stopping at whichever runs out first, which is
+`List.zip`. -/
+def EcTy.listZip {a b : EcTy} (l₁ : (EcTy.list a).interp) (l₂ : (EcTy.list b).interp) :
+    (EcTy.list (EcTy.prod a b)).interp :=
+  (show List a.interp from l₁).zip (show List b.interp from l₂)
+
+/-- The concatenation of two lists, EasyCrypt's `++`. `List.ec` defines it by
+recursion on the first, returning the second at the empty list and
+`x :: (s1 ++ s2)` at `x :: s1`, which is `List.append`. -/
+def EcTy.listCat {a : EcTy} (l₁ l₂ : (EcTy.list a).interp) : (EcTy.list a).interp :=
+  show List a.interp from (show List a.interp from l₁) ++ (show List a.interp from l₂)
+
+/-- The first `n` elements of a list, EasyCrypt's `take`. `List.ec` returns the
+empty list at a non-positive count, which `Int.toNat` gives at every such count,
+so the guard the source writes needs no arm of its own. -/
+def EcTy.listTake {a : EcTy} (l : (EcTy.list a).interp) (n : Int) :
+    (EcTy.list a).interp :=
+  (show List a.interp from l).take n.toNat
+
+/-- The list with position `i` replaced by `x`, EasyCrypt's array update
+`arr.[i <- x]`. `Array.ec` gives it as a sequence of the array's own length whose
+`k`-th entry is `x` where `i = k` and the old entry elsewhere, so an index outside
+the list leaves it unchanged — a negative one included, since `i = k` is false at
+every position there. -/
+def EcTy.listSet {a : EcTy} (l : (EcTy.list a).interp) (i : Int) (x : a.interp) :
+    (EcTy.list a).interp :=
+  if 0 <= i then (show List a.interp from l).set i.toNat x
+  else (show List a.interp from l)
+
 /-- Whether `k` is bound in `m`. -/
 def EcTy.mapMem {a b : EcTy}
     (m : (EcTy.map a b).interp) (k : a.interp)
@@ -679,6 +766,12 @@ def EcTy.listCount {a : EcTy} (p : a.interp → Bool)
     (l : (EcTy.list a).interp) : Int :=
   (((show List a.interp from l).filter p).length : Int)
 
+/-- The concatenation of a list of lists, EasyCrypt's `flatten`. `List.ec`
+defines it as `foldr (++) []`, which is `List.flatten`. -/
+def EcTy.listFlatten {a : EcTy} (l : (EcTy.list (EcTy.list a)).interp) :
+    (EcTy.list a).interp :=
+  (show List (List a.interp) from l).flatten
+
 /-- Whether a list repeats no element, EasyCrypt's `uniq`, at the element code
 `a`. -/
 def EcTy.listUniq {a : EcTy} (l : (EcTy.list a).interp)
@@ -699,6 +792,23 @@ def EcTy.listNth {a : EcTy} (d : a.interp) (l : (EcTy.list a).interp)
     (i : Int) : a.interp :=
   if i < 0 then d else (show List a.interp from l).getD i.toNat d
 
+/-- The first element of `l`, or `z` when `l` is empty — EasyCrypt's
+`head z l`. -/
+def EcTy.listHead {a : EcTy} (z : a.interp) (l : (EcTy.list a).interp) :
+    a.interp :=
+  (show List a.interp from l).headD z
+
+/-- The first of the two equations `List.ec` defines `head` by: the default at
+the empty list. -/
+@[simp] theorem EcTy.listHead_nil {a : EcTy} (z : a.interp) :
+    EcTy.listHead (a := a) z (EcTy.listEmpty (a := a)) = z := rfl
+
+/-- The second of the two equations `List.ec` defines `head` by: the head of a
+cons, whatever the default. -/
+@[simp] theorem EcTy.listHead_cons {a : EcTy} (z x : a.interp)
+    (l : (EcTy.list a).interp) :
+    EcTy.listHead (a := a) z (EcTy.listCons (a := a) x l) = x := rfl
+
 /-- The absent option value at the element code `a`. -/
 def EcTy.noneVal {a : EcTy} : (EcTy.option a).interp :=
   (none : Option a.interp)
@@ -713,6 +823,88 @@ EasyCrypt's own `oget` answers on `None`. -/
 def EcTy.optionGetD {a : EcTy} (o : (EcTy.option a).interp) (d : a.interp) :
     a.interp :=
   (show Option a.interp from o).getD d
+
+/-- The image of an option under a function, EasyCrypt's `omap`. -/
+def EcTy.optionMap {a b : EcTy} (f : a.interp → b.interp)
+    (o : (EcTy.option a).interp) : (EcTy.option b).interp :=
+  show Option b.interp from (show Option a.interp from o).map f
+
+/-! ## Distributions
+
+A value of `(EcTy.distr a).interp` is a `CatCrypt.Prob.SDistr`, so the operations
+below are stated against that sub-distribution. -/
+
+open Classical in
+/-- Whether `x` has nonzero mass in `d`, EasyCrypt's `support d x`.
+
+`Distr.ec` defines `support d x = mu1 d x <> 0`, the membership `x \in d`, which
+at `SDistr` is membership in `CatCrypt.Prob.SDistr.support`. That set is carved
+out by a disequality of extended reals, so the test is its classical decision. -/
+noncomputable def EcTy.support {a : EcTy} (d : (EcTy.distr a).interp)
+    (x : a.interp) : Bool :=
+  decide (x ∈ CatCrypt.Prob.SDistr.support
+    (show CatCrypt.Prob.SDistr a.interp from d))
+
+/-- EasyCrypt's `mu d p`: the probability that a sample from `d` satisfies `p`.
+
+A `CatCrypt.Prob.SDistr a.interp` is a `PMF (Option a.interp)` whose mass on
+`none` is the failed computation, so the value is the sum of the mass on
+`some x` over the `x` the predicate holds of. -/
+noncomputable def EcTy.mu {a : EcTy} (d : (EcTy.distr a).interp)
+    (p : a.interp → Bool) : ENNReal :=
+  ∑' x : a.interp,
+    if p x then (show CatCrypt.Prob.SDistr a.interp from d) (some x) else 0
+
+/-- The bind of `d` with `f`, EasyCrypt's `dlet`.
+
+`Distr.ec` defines `dlet d f = mk (mlet d f)` at
+`mlet d f y = sum<:'a> (fun x => mu1 d x * mu1 (f x) y)`, the monadic bind on
+sub-distributions, which at `SDistr` is `CatCrypt.Prob.SDistr.bind`. This is the
+meaning the program layer's `EcDistr.letD` already carries. -/
+noncomputable def EcTy.distrLet {a b : EcTy} (d : (EcTy.distr a).interp)
+    (f : a.interp → (EcTy.distr b).interp) : (EcTy.distr b).interp :=
+  CatCrypt.Prob.SDistr.bind (show CatCrypt.Prob.SDistr a.interp from d)
+    (fun v => show CatCrypt.Prob.SDistr b.interp from f v)
+
+/-- The pushforward of `d` along `f`, EasyCrypt's `dmap`.
+
+`Distr.ec` defines `dmap d f = dlet d (MUnit.dunit \o f)`, the bind of `d` with
+the point mass at the image, which at `SDistr` is `EcTy.distrLet` against
+`CatCrypt.Prob.SDistr.pure`. This is the meaning the program layer's
+`EcDistr.map` already carries. -/
+noncomputable def EcTy.distrMap {a b : EcTy} (d : (EcTy.distr a).interp)
+    (f : a.interp → b.interp) : (EcTy.distr b).interp :=
+  EcTy.distrLet (a := a) (b := b) d (fun v => CatCrypt.Prob.SDistr.pure (f v))
+
+/-! ## Finite enumeration
+
+`Finite.ec` states finiteness of a predicate through the lists that enumerate
+it: `is_finite_for p s = uniq s /\ (forall x, x \in s <=> p x)` and
+`is_finite p = exists s, is_finite_for p s`. -/
+
+open Classical in
+/-- EasyCrypt's `to_seq`: a duplicate-free list of exactly the values `p` holds
+of when `p` holds of finitely many, and the empty list otherwise.
+
+`Finite.ec` defines `to_seq p = choiceb (fun s => is_finite_for p s) []`, so the
+value is a choice among the lists that enumerate `p` without repetition, with
+the empty list where there is none. `Exists.choose` is that choice, as it is for
+`EcTy.choiceb`. -/
+noncomputable def EcTy.toSeq {a : EcTy} (p : a.interp → Bool) :
+    (EcTy.list a).interp :=
+  show List a.interp from
+    if h : ∃ s : List a.interp, s.Nodup ∧ ∀ x, x ∈ s ↔ p x = true then h.choose
+    else []
+
+open Classical in
+/-- EasyCrypt's `finite_type` at the code `a`: whether some duplicate-free list
+holds every value of the carrier.
+
+`Finite.ec` defines `finite_type = is_finite predT<:'a>`, and `Logic.ec` defines
+`predT x = true`, so the predicate the enumeration is asked for is the one every
+value satisfies. -/
+noncomputable def EcTy.finiteType (a : EcTy) : Bool :=
+  decide (∃ s : List a.interp, s.Nodup ∧ ∀ x, x ∈ s)
 
 /-! ## Finite sets
 
@@ -741,6 +933,19 @@ def EcTy.fsetMem {a : EcTy} (s : (EcTy.fset a).interp) (x : a.interp)
   letI := decEqOfHasEq a hEq
   decide (x ∈ (show Finset a.interp from s))
 
+/-- The number of elements of `s`, at the element code `a`, as an integer. The
+source's `card` is EasyCrypt's `int`, which is `EcTy.int`, so the count is
+injected rather than left a `Nat`. -/
+def EcTy.fsetCard {a : EcTy} (s : (EcTy.fset a).interp) : Int :=
+  ((show Finset a.interp from s).card : Int)
+
+/-- Whether every element of `s` is an element of `t`, at the element code
+`a`. -/
+def EcTy.fsetSubset {a : EcTy} (s t : (EcTy.fset a).interp)
+    (hEq : a.hasEq = true := by rfl) : Bool :=
+  letI := decEqOfHasEq a hEq
+  decide ((show Finset a.interp from s) ⊆ (show Finset a.interp from t))
+
 /-- The finite set of the elements of a list, at the element code `a`. This is
 the shape the emitter prints a set value as: a set is the same value whichever
 list of its elements is written. -/
@@ -748,6 +953,66 @@ def EcTy.fsetOfList {a : EcTy} (xs : List a.interp)
     (hEq : a.hasEq = true := by rfl) : (EcTy.fset a).interp :=
   letI := decEqOfHasEq a hEq
   show Finset a.interp from xs.toFinset
+
+/-- A key the association list carries is bound, and a key it does not carry is
+unbound: the keys of `m` are exactly the first components of its pairs. -/
+theorem EcTy.mapFind_isSome_iff {a b : EcTy} (m : (EcTy.map a b).interp)
+    (x : a.interp) (hEq : a.hasEq = true) :
+    (EcTy.mapFind (a := a) (b := b) m x hEq).isSome = true
+      ↔ x ∈ (show List (a.interp × b.interp) from m).map Prod.fst := by
+  letI := decEqOfHasEq a hEq
+  induction (show List (a.interp × b.interp) from m) with
+  | nil => simp [EcTy.mapFind]
+  | cons kv t ih =>
+      obtain ⟨k, v⟩ := kv
+      by_cases hk : k = x
+      · simp_all [EcTy.mapFind]
+      · simp_all [EcTy.mapFind]
+        exact fun h => absurd h.symm hk
+
+/-- The finite set of the keys `m` binds, EasyCrypt's `fdom`. -/
+def EcTy.mapFdom {a b : EcTy} (m : (EcTy.map a b).interp)
+    (hEq : a.hasEq = true := by rfl) : (EcTy.fset a).interp :=
+  EcTy.fsetOfList (a := a)
+    ((show List (a.interp × b.interp) from m).map Prod.fst) hEq
+
+/-- The reading `FMap.ec` gives `fdom`, as its own lemma `mem_fdom` states it:
+the elements of the domain are the keys the map binds. -/
+theorem EcTy.fsetMem_mapFdom {a b : EcTy} (m : (EcTy.map a b).interp)
+    (x : a.interp) (hEq : a.hasEq = true) :
+    EcTy.fsetMem (a := a) (EcTy.mapFdom (a := a) (b := b) m hEq) x hEq
+      = EcTy.mapMem (a := a) (b := b) m x hEq := by
+  letI := decEqOfHasEq a hEq
+  have h := EcTy.mapFind_isSome_iff (a := a) (b := b) m x hEq
+  simp only [EcTy.fsetMem, EcTy.mapFdom, EcTy.fsetOfList, EcTy.mapMem,
+    List.mem_toFinset]
+  rw [Bool.eq_iff_iff, decide_eq_true_eq]
+  exact h.symm
+
+/-- Whether `y` is the binding of some key of `m`, EasyCrypt's `rng`. -/
+def EcTy.mapRng {a b : EcTy} (m : (EcTy.map a b).interp) (y : b.interp)
+    (hEqA : a.hasEq = true := by rfl) (hEqB : b.hasEq = true := by rfl) : Bool :=
+  letI := decEqOfHasEq a hEqA
+  letI := decEqOfHasEq b hEqB
+  ((show List (a.interp × b.interp) from m).map Prod.fst).any
+    (fun k => EcTy.mapFind (a := a) (b := b) m k hEqA = some y)
+
+/-- The reading `FMap.ec` gives `rng`, which is its definition: `y` is in the
+range exactly when some key is bound to it. A key the association list does not
+carry is unbound, so quantifying over the keys it carries quantifies over every
+key that could witness the range. -/
+theorem EcTy.mapRng_iff {a b : EcTy} (m : (EcTy.map a b).interp) (y : b.interp)
+    (hEqA : a.hasEq = true) (hEqB : b.hasEq = true) :
+    EcTy.mapRng (a := a) (b := b) m y hEqA hEqB = true
+      ↔ ∃ k, EcTy.mapFind (a := a) (b := b) m k hEqA = some y := by
+  letI := decEqOfHasEq a hEqA
+  letI := decEqOfHasEq b hEqB
+  simp only [EcTy.mapRng, List.any_eq_true, decide_eq_true_eq]
+  constructor
+  · rintro ⟨k, _, hk⟩; exact ⟨k, hk⟩
+  · rintro ⟨k, hk⟩
+    refine ⟨k, ?_, hk⟩
+    exact (EcTy.mapFind_isSome_iff (a := a) (b := b) m k hEqA).mp (by simp [hk])
 
 /-- Union of finite sets is commutative: the image is the quotient, so the
 insertion order of one set is not observable. -/

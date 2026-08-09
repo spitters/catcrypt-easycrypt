@@ -31,11 +31,14 @@ proof crosses the boundary.
 
 ## Coverage
 
-Nine of EasyCrypt's shipped `crypto/` developments import with no decode error:
-`Commitment`, `LorR`, `MAC`, `PRG`, `pke/PKE_CPA`, `ske/CPA`, `ske/CCA`,
-`ske/CCA1` and `ske/NewSKE`. Every item of each either closes or is reported
-parameterised over a declaration the envelope leaves abstract, which the caller
-supplies.
+Twenty-two of EasyCrypt's shipped `crypto/` developments import with no decode
+error: `assumptions/AEAD`, `assumptions/MRPKE`, `Commitment`,
+`DigitalSignatures`, `KeyedHashFunctions`, `LorR`, `MAC`, `OW`, `pke/PKE_CPA`,
+`PKS`, `PRF`, `PRG`, `PublicKeyEncryption`, `PublicKeyEncryptionROM`,
+`SecureChannels`, `SigmaProtocol`, `ske/CCA`, `ske/CCA1`, `ske/CPA`,
+`ske/NewSKE`, `SymmetricEncryption` and `TweakableHashFunctions`. Every item of
+each either closes or is reported parameterised over a declaration the envelope
+leaves abstract, which the caller supplies.
 
 `--survey-all` is what measures this — it decode-attempts every item of every
 export in a directory, in one process, and classifies each:

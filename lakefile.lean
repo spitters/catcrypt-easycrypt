@@ -32,7 +32,7 @@ lean_lib CatCrypt where
 -- the lowering and the statement translation land on.
 --
 require catcryptCore from git
-  "https://github.com/spitters/CatCrypt-core.git" @ "0.1.0-alpha.4"
+  "https://github.com/spitters/CatCrypt-core.git" @ "0.1.0-alpha.5"
 
 -- `HaxLean.JsonSize`: the JSON size measure the two decoders recurse on, which is
 -- what makes them total `def`s rather than `partial def`s.

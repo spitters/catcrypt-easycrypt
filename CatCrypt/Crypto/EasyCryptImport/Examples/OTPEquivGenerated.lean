@@ -41,7 +41,7 @@ noncomputable def otpEquivStatement : Prop :=
 /-- The shallow reading of that statement, derived from the form. -/
 theorem otpEquivStatement_eq :
     otpEquivStatement =
-      pRHL (fun _ _ => True) (lowerClosedGame (OTPImport.otpGame false)) (lowerClosedGame (OTPImport.otpGame true)) (fun r₁ _ r₂ _ => r₁ = r₂) :=
+      pRHL (fun _ _ => True) (lowerClosedGame OpEnv.empty (OTPImport.otpGame false)) (lowerClosedGame OpEnv.empty (OTPImport.otpGame true)) (fun r₁ _ r₂ _ => r₁ = r₂) :=
   rfl
 
 end CatCrypt.Crypto.EasyCryptImport.Generated

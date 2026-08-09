@@ -167,7 +167,7 @@ def keyModule : EcModule where
 
 /-- The lowered module: one `SPComp` procedure writing the location `Key.k`. -/
 noncomputable def keyImpl : ModuleImpl srcInterface :=
-  lowerModule ProcEnv.empty 0 keyModule
+  lowerModule ProcEnv.empty OpEnv.empty 0 keyModule
 
 theorem keyImpl_get :
     keyImpl.proc "get" ()
@@ -176,7 +176,7 @@ theorem keyImpl_get :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sample .bool "kk", EcStmt.store kGlobal (EcExpr.var .bool "kk")]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "kk") env)) = _
   simp only [lowerStmts_sample, lowerStmts_store_finLoc (g := kGlobal) (hfin := rfl),
     lowerStmts_nil, sampleFin_bool, SPComp.bind_assoc, SPComp.pure_bind, evalExpr,
@@ -272,7 +272,7 @@ noncomputable def pairEnv (A : ModuleImpl advInterface) (B : ModuleImpl srcInter
 /-- `Pair(A, B).main`, the procedure `pair_ll` names. -/
 noncomputable def pairMain (A : ModuleImpl advInterface) (B : ModuleImpl srcInterface) :
     SPComp Bool :=
-  (lowerFunctorNX (pairEnv A B) 0 pairFunctor ((pairEnv A B).moduleX "A" advInterface)
+  (lowerFunctorNX (pairEnv A B) OpEnv.empty 0 pairFunctor ((pairEnv A B).moduleX "A" advInterface)
       ((pairEnv A B).moduleX "B" srcInterface)).proc "main" ()
 
 /-- The environment the single module binder of `pair_key_ll` produces. -/
@@ -281,7 +281,7 @@ noncomputable def keyEnv (A : ModuleImpl advInterface) : ProcEnv :=
 
 /-- `Pair(A, Key).main`, the procedure `pair_key_ll` names. -/
 noncomputable def pairKeyMain (A : ModuleImpl advInterface) : SPComp Bool :=
-  (lowerFunctorNX (keyEnv A) 0 pairFunctor ((keyEnv A).moduleX "A" advInterface)
+  (lowerFunctorNX (keyEnv A) OpEnv.empty 0 pairFunctor ((keyEnv A).moduleX "A" advInterface)
       keyImpl).proc "main" ()
 
 /-! ## Call resolution
@@ -329,7 +329,7 @@ theorem pairMain_eq (A : ModuleImpl advInterface) (B : ModuleImpl srcInterface) 
             (EcExpr.lit (t := .unit) ()) "x",
           EcStmt.callProc (xqualify "P" "guess") ⟨.bool, .bool⟩
             (EcExpr.var .bool "x") "b" ]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "b") env)) = _
   simp only [lowerStmts_callProc, lowerStmts_nil, pairBody_P, pairBody_S, evalExpr,
     EcTy.interp, SPComp.bind_assoc, SPComp.pure_bind, Env.read_update_same]
@@ -349,7 +349,7 @@ theorem pairKeyMain_eq (A : ModuleImpl advInterface) :
             (EcExpr.lit (t := .unit) ()) "x",
           EcStmt.callProc (xqualify "P" "guess") ⟨.bool, .bool⟩
             (EcExpr.var .bool "x") "b" ]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "b") env)) = _
   simp only [lowerStmts_callProc, lowerStmts_nil, pairKeyBody_S, keyImpl_get, evalExpr,
     EcTy.interp, SPComp.bind_assoc, SPComp.pure_bind, Env.read_update_same]
@@ -448,7 +448,7 @@ noncomputable def pairImages : String → ProcEnv → ProcEnv := fun name ρ =>
   if name = "B" then
     ρ.bindProc pairPath (s := mainSig)
       (fun _ =>
-        (lowerFunctorNX ρ 0 pairFunctor (ρ.moduleX "A" advInterface)
+        (lowerFunctorNX ρ OpEnv.empty 0 pairFunctor (ρ.moduleX "A" advInterface)
             (ρ.moduleX "B" srcInterface)).proc "main" ())
   else ρ
 
@@ -458,7 +458,7 @@ noncomputable def pairKeyImages : String → ProcEnv → ProcEnv := fun name ρ 
   if name = "A" then
     ρ.bindProc pairKeyPath (s := mainSig)
       (fun _ =>
-        (lowerFunctorNX ρ 0 pairFunctor (ρ.moduleX "A" advInterface) keyImpl).proc "main" ())
+        (lowerFunctorNX ρ OpEnv.empty 0 pairFunctor (ρ.moduleX "A" advInterface) keyImpl).proc "main" ())
   else ρ
 
 /-- The imported statement of `pair_ll`, as a goal. -/

@@ -135,6 +135,7 @@ table is an error.
 | `Flocal` at a bound stamp | `EcTerm.var`, and `EcProb.pvar` at `real` |
 | `Fop p`, `p` in `constPaths` | `EcTerm.lit`, and `EcForm.tru` / `.fls` at the booleans |
 | `Fop p`, `p` in `absOpPaths` | `EcTerm.opApp` at the declared signature |
+| `Fop p`, `p` in `defOpPaths` with parameters | the definition's body under one `EcTerm.lam` per parameter |
 | `Fapp` of `Fop p`, `p` in `absOpPaths` | `EcTerm.opApp` at the declared signature, applied to the arguments as the right-nested pair |
 | `Fapp` of `Fop p`, `p` in `polyOpPaths` | the definition's body, at the type arguments the node carries and with the value arguments substituted |
 | `Fapp` of `Fop p`, `p` in `defOpPaths` at a body `decodeTerm` has no image for | the definition's body as a formula, under one `EcForm.letF` per parameter |
@@ -147,17 +148,23 @@ table is an error.
 | `Fapp` of integer `+` / `<=` | `EcTerm.intAdd` / `.intLe` |
 | `Fapp` of integer `<` | `EcTerm.bnot` of the reversed `.intLe` |
 | `Fapp` of `dom` / `::` / `size` / list `mem` / set `mem` | `EcTerm.mapMem` / `.listCons` / `.listSize` / `.listMem` / `.fsetMem` |
+| `Fapp` of `_.[_]` / `_.[_<-_]` | `EcTerm.mapFind` at the option code / `.mapSet` |
+| `Fapp` of `support` / `omap` | `EcTerm.support` / `.optionMap` |
+| `Fapp` of `++` | `EcTerm.listCat` |
+| `Fapp` of `` `*` `` / `\` | `EcTerm.distrProd` / `.distrExcept` |
 | `Fapp` of `=`, `<=`, `<` at `real` | `EcForm.probCmp` |
 | `Ftuple`, `Fproj` | `EcTerm.pair`, `.fst` / `.snd` |
 | `Fif`, `Flet` of an `LSymbol` | `EcTerm.ite` / `EcForm.ifF`, `EcTerm.letIn` / `EcForm.letF` |
 | `Fapp` of `=` between two `Fglob` | `EcForm.memEqOn` / `.memEqOnMod` |
-| `Fquant` of `GTty` / `GTmem` / `GTmodty` | `EcForm.allTy` / `.exTy`, `.allMem` / `.exMem`, `.allMod` / `.allModOn` or `.allModRestr` / `.allModRestrOn` |
+| `Fquant` of `GTty` / `GTmem` / `GTmodty` | `EcForm.allTy` / `.exTy`, `.allMem` / `.exMem`, `.allMod` / `.allModOn`, `.allModRestr` / `.allModRestrOn` or `.allModRestrOf` / `.allModRestrOfOn` |
 | `Fquant` of `GTty` at `real` | `EcForm.allProb` |
+| `Fquant` of `GTty` in term position at `bool` | `EcTerm.forallB` / `.existsB` |
 | `FhoareF`, `FbdHoareF`, `FequivF` | `EcForm.hoare`, `.bdHoare`, `.equiv` |
 | `FbdHoareF` over an abstract module's procedure | `EcForm.lossless` |
 | `Fpr` | `EcProb.pr` |
 | `Fapp` of real `+`, `*` | `EcProb.add`, `.mul` |
 | `Fapp` of `\|·\|` to a difference | `EcProb.absDiff` |
+| `Fapp` of `mu` to a distribution and a predicate | `EcProb.mu` |
 | `Fapp` of `from_int` to a non-negative `Fint` | `EcProb.const` |
 | `Fint` at the `int` code | `EcTerm.lit` |
 
@@ -218,7 +225,8 @@ theorem getObj_getObj_decreases {j v w : Json} {k₁ k₂ : String}
 
 /-- The EasyCrypt paths the statement layer dispatches on beyond the program
 fragment's tables: the type of reals, the real operators a probability expression
-is built from, and propositional equivalence. -/
+is built from, propositional equivalence, and the operators the term layer reads
+ahead of the operator tables. -/
 structure FormPaths where
   /-- The path of EasyCrypt's `real` type. -/
   realTy : String
@@ -242,6 +250,53 @@ structure FormPaths where
   iffOp : String
   /-- The predicate asserting that a distribution has total mass one. -/
   losslessOp : String
+  /-- Membership in a distribution's support, EasyCrypt's `support`, at every
+  spelling the export writes it under. `Distr.ec` roots its own declarations at
+  `Top`, so a client that reads the theory qualified writes `Top.Distr.support`
+  and one that reads it unqualified writes `Top.support`. -/
+  supportOps : List String
+  /-- The image of an option under a function, EasyCrypt's `omap`, at every
+  spelling the export writes it under. -/
+  optionMapOps : List String
+  /-- The pushforward of a distribution along a function, EasyCrypt's `dmap`, at
+  every spelling the export writes it under. -/
+  distrMapOps : List String
+  /-- The bind of a distribution with a distribution-valued function,
+  EasyCrypt's `dlet`, at every spelling the export writes it under. -/
+  distrLetOps : List String
+  /-- The values a predicate holds of, EasyCrypt's `to_seq`, at every spelling
+  the export writes it under. -/
+  toSeqOps : List String
+  /-- Catenation of two lists, EasyCrypt's `++`, at every spelling the export
+  writes it under. -/
+  listCatOps : List String
+  /-- The independent product of two distributions, EasyCrypt's `` `*` ``, at
+  every spelling the export writes it under. -/
+  distrProdOps : List String
+  /-- A distribution conditioned on avoiding a predicate, EasyCrypt's `\`, at
+  every spelling the export writes it under. -/
+  distrExceptOps : List String
+  /-- Whether a key is bound in a finite map, EasyCrypt's `dom`, at the
+  spellings the program fragment's operator table does not carry. `FMap.ec`
+  roots its own declarations at `Top`, so its own statements write `Top.dom`
+  where a client writes `Top.FMap.dom`. -/
+  mapDomOps : List String
+  /-- The binding of a key in a finite map, EasyCrypt's `m.[k]`, at the
+  spellings the program fragment's operator table does not carry. -/
+  mapLookupOps : List String
+  /-- Whether a type's carrier is finite, EasyCrypt's `finite_type`, at every
+  spelling the export writes it under. This operator is nullary and takes its
+  type by type argument. -/
+  finiteTypeOps : List String
+  /-- The predicate every value satisfies, EasyCrypt's `predT`, at every
+  spelling the export writes it under. This operator is read unapplied, as the
+  predicate argument of an enumeration or a measure. -/
+  predTOps : List String
+  /-- The probability that a sample satisfies a predicate, EasyCrypt's `mu`, at
+  every spelling the export writes it under. `Pervasive.ec` roots its own
+  declarations at `Top`, so a client reads it at `Top.Pervasive.mu` and the
+  declaring theory's own statements at `Top.mu`. -/
+  muOps : List String
   /-- The name EasyCrypt gives the result of a judgement. -/
   resName : String
 
@@ -258,6 +313,19 @@ def ecFormPaths : FormPaths where
   realLt := "Top.CoreReal.lt"
   iffOp := "Top.Pervasive.<=>"
   losslessOp := "Top.Distr.is_lossless"
+  supportOps := ["Top.Distr.support", "Top.support"]
+  optionMapOps := ["Top.Logic.omap", "Top.omap"]
+  distrMapOps := ["Top.Distr.dmap", "Top.dmap"]
+  distrLetOps := ["Top.Distr.dlet", "Top.dlet"]
+  toSeqOps := ["Top.Finite.to_seq", "Top.to_seq"]
+  listCatOps := ["Top.List.++", "Top.++"]
+  distrProdOps := ["Top.Distr.`*`", "Top.`*`"]
+  distrExceptOps := ["Top.Dexcepted.\\", "Top.\\"]
+  mapDomOps := ["Top.dom"]
+  mapLookupOps := ["Top._.[_]"]
+  finiteTypeOps := ["Top.Finite.finite_type", "Top.finite_type"]
+  predTOps := ["Top.Logic.predT", "Top.predT"]
+  muOps := ["Top.Pervasive.mu", "Top.mu"]
   resName := "res"
 
 /-- The tables a statement decodes against: the program fragment's dispatch
@@ -407,17 +475,36 @@ def procSigOf (F : FormTables) (q : String) : Except String EcSig :=
     match abstractProcOf F q with
     | some (I, p) => .ok (I.sig p)
     | none =>
-      fail s!"the procedure '{q}' is not in the ingestion's signature table and \
-        names no procedure of a module binder in scope, so the signature its \
-        judgement carries cannot be reconstructed"
+      -- A judgement naming a procedure of a module expression resolves at the
+      -- head, for the reason `callHeadPath` records: a procedure's signature is
+      -- declared by its module's type and not by the modules a functor is
+      -- applied to. Which module the expression is stays the caller's to supply,
+      -- through `FormEnv.functorImages`.
+      let h := callHeadPath q
+      match if h == q then none else List.lookup h F.procSigs with
+      | some s => .ok s
+      | none =>
+        match if h == q then none else abstractProcOf F h with
+        | some (I, p) => .ok (I.sig p)
+        | none =>
+          fail s!"the procedure '{q}' is not in the ingestion's signature table \
+            and names no procedure of a module binder in scope, at its own path \
+            or at its head, so the signature its judgement carries cannot be \
+            reconstructed"
 
 /-! ## Module restrictions
 
 An exported restriction is a `use_restr` over procedure paths and over module
 paths: a negative set of what the module may not touch, and an optional positive
-set of what it may. Only the negative module set has an image — the footprint of
-the named modules' `var` declarations — so the other three components are
-rejected rather than dropped. -/
+set of what it may. Only the negative module set has an image, so the other three
+components are rejected rather than dropped.
+
+An element of that set is a concrete module, whose footprint is its `var`
+declarations; a module binder in scope, whose footprint is the one its own
+quantifier binds; or a functor applied to such modules, whose footprint is the
+head's together with the arguments'. An element the reader resolves to none of
+the three is rejected, since a footprint guessed wider than the source's makes
+the hypothesis it states a stronger one. -/
 
 /-- The elements of the negative set of an exported `use_restr`, and an error if
 its positive set is present. -/
@@ -436,10 +523,68 @@ def restrNeg (j : Json) (k : String) : Except String (List String) := do
       lists what a module may touch has no image, since the emitted hypothesis \
       states what it may not"
 
-/-- The footprint an exported module restriction names: the `var` declarations of
-every module in its negative module set, or `none` when the restriction is
-empty. -/
-def restrGlobals (F : FormTables) (g : Json) : Except String (Option (List EcGlobal)) := do
+/-- Split a character list at its top-level commas, dropping the separators. -/
+private def splitTopCommas : List Char → Nat → List Char → List (List Char)
+  | [], _, acc => [acc.reverse]
+  | ',' :: rest, 0, acc => acc.reverse :: splitTopCommas rest 0 []
+  | c :: rest, d, acc =>
+      splitTopCommas rest (if c = '(' then d + 1 else if c = ')' then d - 1 else d)
+        (c :: acc)
+
+/-- The head and the arguments of a module application: `Top.Count(O)` is
+`("Top.Count", ["O"])`, and a path carrying no application group is itself with
+no arguments. -/
+def splitModApp (q : String) : String × List String :=
+  let cs := q.toList
+  match cs.findIdx? (· = '(') with
+  | none => (q, [])
+  | some i =>
+    if cs.getLast? = some ')' then
+      let inner := (cs.drop (i + 1)).dropLast
+      (String.ofList (cs.take i),
+        (splitTopCommas inner 0 []).map (fun p => String.ofList (p.filter (· ≠ ' ')))
+          |>.filter (· ≠ ""))
+    else (q, [])
+
+#guard splitModApp "Top.Count(O)" == ("Top.Count", ["O"])
+#guard splitModApp "Top.F(A, B)" == ("Top.F", ["A", "B"])
+#guard splitModApp "Top.Sample" == ("Top.Sample", [])
+#guard splitModApp "Top.F(G(A), B)" == ("Top.F", ["G(A)", "B"])
+
+/-- The footprint a module path with no application names: the module binder in
+scope it is, or the `var` declarations the ingestion's table holds for it. The
+binder table is consulted first, since EasyCrypt qualifies every path of a
+concrete module and a bare name in a restriction is a binder. `whole` is the
+restriction element the path comes from, which is the path itself unless the
+element applies a functor. -/
+def restrLeaf (F : FormTables) (whole m : String) : Except String EcModRestr :=
+  if (List.lookup m F.modBinders).isSome then
+    .ok { globals := [], binders := [m] }
+  else
+    match List.lookup m F.modGlobals with
+    | some gs => .ok { globals := gs, binders := [] }
+    | none =>
+      if m == whole then
+        fail s!"the restricting module '{m}' is neither a module binder in scope \
+          nor a module of the ingestion's module-globals table, so the footprint \
+          it names is unknown"
+      else
+        fail s!"the restricting module '{whole}' names '{m}', which is neither a \
+          module binder in scope nor a module of the ingestion's module-globals \
+          table, so the footprint the application names is unknown"
+
+/-- The footprint one element of a restriction's negative module set names. An
+applied functor names the footprint of its head together with those of its
+arguments, which is what `glob F(A)` covers in EasyCrypt. -/
+def restrTarget (F : FormTables) (m : String) : Except String EcModRestr := do
+  let (h, args) := splitModApp m
+  let hd ← restrLeaf F m h
+  let rs ← args.mapM (restrLeaf F m)
+  .ok (rs.foldl EcModRestr.append hd)
+
+/-- The modules an exported module restriction names, or `none` when the
+restriction is empty. -/
+def restrModules (F : FormTables) (g : Json) : Except String (Option EcModRestr) := do
   let r ← getObj g "restr"
   let xs ← restrNeg r "xpaths"
   let ms ← restrNeg r "mpaths"
@@ -450,13 +595,99 @@ def restrGlobals (F : FormTables) (g : Json) : Except String (Option (List EcGlo
   else if ms = [] then
     .ok none
   else
-    let gss ← ms.mapM (fun m =>
-      match List.lookup m F.modGlobals with
-      | some gs => .ok gs
-      | none =>
-        fail s!"the restricting module '{m}' is not in the ingestion's \
-          module-globals table, so the footprint it names is unknown")
-    .ok (some gss.flatten)
+    let rs ← ms.mapM (restrTarget F)
+    .ok (some (rs.foldl EcModRestr.append EcModRestr.empty))
+
+/-- The footprint an exported module restriction names, when every module it
+names is a concrete module of the ingestion's table: the `var` declarations of
+each, or `none` when the restriction is empty. -/
+def restrGlobals (F : FormTables) (g : Json) : Except String (Option (List EcGlobal)) := do
+  match ← restrModules F g with
+  | none => .ok none
+  | some r =>
+    if r.binders.isEmpty then .ok (some r.globals)
+    else
+      fail s!"the restriction against the module binders {r.binders}: their \
+        footprints are bound variables, and this reader gives a footprint of \
+        declared globals"
+
+/-- The `use_restr` node excluding the modules `ms` and nothing else, at the
+exporter's shape. -/
+private def jUseRestr (ms : List String) : Json :=
+  Json.mkObj
+    [("mpaths", Json.mkObj
+        [("neg", Json.arr (ms.map Json.str).toArray), ("pos", Json.null)]),
+     ("xpaths", Json.mkObj [("neg", Json.arr #[]), ("pos", Json.null)])]
+
+/-- A node carrying the restriction that excludes the modules `ms`. -/
+private def jRestrOf (ms : List String) : Json :=
+  Json.mkObj [("restr", jUseRestr ms)]
+
+/-- An interface declaring no procedure, for the checks below. -/
+private def chkRestrInterface : EcInterface where
+  names := []
+  sig := fun _ => ⟨.unit, .unit⟩
+
+/-- The tables the restriction checks read: the module binder `A` in scope, the
+concrete module `Top.M` declaring one global, and the parameter-free functor
+`Top.F` declaring none. -/
+private def chkRestrTables : FormTables :=
+  { formTables ecPrelude [] with
+      modTypes := [("Top.I", chkRestrInterface)],
+      modBinders := [("A", chkRestrInterface)],
+      modGlobals := [("Top.M", [{ name := "Top.M./g", id := 7, ty := .bool }]),
+                     ("Top.F", [])] }
+
+-- A restriction against a module of the ingestion's table names its declared
+-- globals.
+#guard (match restrModules chkRestrTables (jRestrOf ["Top.M"]) with
+        | .ok (some r) => r.globals.map (·.id) == [7] && r.binders == []
+        | _ => false)
+
+-- A restriction against a module binder in scope names the binder, whose
+-- footprint the binder's own quantifier binds.
+#guard (match restrModules chkRestrTables (jRestrOf ["A"]) with
+        | .ok (some r) => r.globals.isEmpty && r.binders == ["A"]
+        | _ => false)
+
+-- An applied functor names the footprint of its head together with those of its
+-- arguments.
+#guard (match restrModules chkRestrTables (jRestrOf ["Top.F(A)"]) with
+        | .ok (some r) => r.globals.isEmpty && r.binders == ["A"]
+        | _ => false)
+
+-- A restriction naming a concrete module and a binder names both.
+#guard (match restrModules chkRestrTables (jRestrOf ["Top.M", "A"]) with
+        | .ok (some r) => r.globals.map (·.id) == [7] && r.binders == ["A"]
+        | _ => false)
+
+-- A path that is neither a binder in scope nor a module of the table is
+-- rejected, and the message says which it is not.
+#guard (match restrModules chkRestrTables (jRestrOf ["Top.Absent"]) with
+        | .error m =>
+          m.startsWith "ec-import: the restricting module 'Top.Absent' is neither \
+            a module binder in scope"
+        | _ => false)
+
+-- An application whose head is neither is rejected at the head, which the
+-- message names alongside the element it comes from.
+#guard (match restrModules chkRestrTables (jRestrOf ["Top.Absent(A)"]) with
+        | .error m => (m.splitOn "names 'Top.Absent'").length == 2
+        | _ => false)
+
+-- The empty restriction names no footprint.
+#guard (match restrModules chkRestrTables (jRestrOf []) with
+        | .ok none => true
+        | _ => false)
+
+-- The globals reader agrees with it on a restriction naming only concrete
+-- modules, and rejects one naming a binder, whose footprint is not a list of
+-- declarations.
+#guard (match restrGlobals chkRestrTables (jRestrOf ["Top.M"]) with
+        | .ok (some gs) => gs.map (·.id) == [7]
+        | _ => false)
+
+#guard (restrGlobals chkRestrTables (jRestrOf ["A"])).toOption.isNone
 
 /-! ## Footprint comparisons
 
@@ -560,6 +791,13 @@ def appHeadTargs (j : Json) : List Json :=
     | _ => []
   | .error _ => []
 
+/-- The type arguments a nullary operator read gives the operator, as the
+exporter's type nodes. -/
+def nullaryTargs (j : Json) : List Json :=
+  match j.getObjVal? "targs" with
+  | .ok (.arr a) => a.toList
+  | _ => []
+
 /-- Whether a node is an application of the operator `p`. -/
 def isAppOf (p : String) (j : Json) : Bool :=
   match j.getObjValAs? String "kind" with
@@ -568,6 +806,10 @@ def isAppOf (p : String) (j : Json) : Bool :=
     | .ok q => q == p
     | .error _ => false
   | _ => false
+
+/-- Whether a node is an application of one of the operators `ps`. -/
+def isAppOfAny (ps : List String) (j : Json) : Bool :=
+  ps.any (fun p => isAppOf p j)
 
 /-- Transport a term along an equality of type codes. -/
 def EcTerm.castTy {a b : EcTy} (h : a = b) (e : EcTerm a) : EcTerm b :=
@@ -751,6 +993,59 @@ def applyArgs : ((t : EcTy) × EcTerm t) → List ((u : EcTy) × EcTerm u) →
     fail s!"a value of type {repr t} is applied to an argument: only an arrow \
       code is applied"
 
+/-! ## The binders of a quantified term
+
+An EasyCrypt proposition is a value of `bool`, so a quantifier stands wherever a
+boolean term does. `bindTermBinders` reads the binder list of such a node: every
+binder ranges over the values of a type code, and a memory or module binder is
+refused, since neither is a value of an `EcTy`.
+
+The result is the `locals` the body is decoded under rather than the extended
+tables, so that the dispatch tables of the extended environment are the caller's
+own by construction — which is what lets the recursion measured on them descend
+under the binders. -/
+
+/-- The logical variables the binders of a quantified term bind, and the code
+and the name of each binder in source order.
+
+A binder is bound under `FormTables.localBindName`, so a binder whose source name
+another live binder already carries is read under a freshened name, exactly as a
+formula quantifier's binder is. -/
+def bindTermBinders : FormTables → List Json →
+    Except String (List (Nat × String) × List (EcTy × String))
+  | F, [] => .ok (F.locals, [])
+  | F, b :: bs =>
+    match getStr b "name", getNat b "stamp", getObj b "gty" with
+    | .ok nm, .ok st, .ok g =>
+      match getStr g "kind" with
+      | .error e => .error e
+      | .ok "GTty" =>
+        match decodeTyField F.tables g "ty" with
+        | .error e => .error e
+        | .ok u =>
+          let x := F.localBindName st nm
+          match F.bindLocal st x with
+          | .error e => .error e
+          | .ok F' =>
+            match bindTermBinders F' bs with
+            | .error e => .error e
+            | .ok (ls, xs) => .ok (ls, (u, x) :: xs)
+      | .ok k =>
+        fail s!"the binder '{nm}' of sort '{k}' in a quantified term: a term \
+          quantifier ranges over the values of a type code"
+    | _, _, _ =>
+      fail s!"a quantifier binder without a name, a stamp and a sort in \
+        {b.compress}"
+
+/-- The term `body` under one quantifier per binder, the first binder
+outermost. -/
+def wrapQuantTerm (universal : Bool) :
+    List (EcTy × String) → EcTerm .bool → EcTerm .bool
+  | [], e => e
+  | (u, x) :: rest, e =>
+    let inner := wrapQuantTerm universal rest e
+    if universal then .forallB u x inner else .existsB u x inner
+
 /-! ## Terms
 
 A term decodes at the type code the context expects, and the node's own `ty`
@@ -778,8 +1073,7 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
         there is nothing to match on"
     else if kind = "Fquant" then
       -- A lambda over a single binder is `EcTerm.lam`, which is what the source
-      -- supplies for the function argument of a list combinator. Every other
-      -- quantifier binds a proposition and belongs to `EcForm`.
+      -- supplies for the function argument of a list combinator.
       match getStr j "quant" with
       | .ok "Llambda" =>
         match t with
@@ -808,7 +1102,34 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
         | _ =>
           fail s!"a lambda in {j.compress} where the context expects \
             {repr t}, which is not an arrow code"
-      | _ => fail s!"quantified term in {j.compress}: EcTerm has no binder"
+      -- `forall` and `exists` at `bool` are propositions EasyCrypt writes where
+      -- a value is expected, and `EcTerm.forallB` / `.existsB` are their images.
+      -- The binders are bound in one pass and the body is decoded once under
+      -- all of them, so the decoder makes a single recursive call.
+      | .ok q =>
+        if q == "Lforall" || q == "Lexists" then
+          match t with
+          | .bool =>
+            match getArr j "binders" with
+            | .error e => .error e
+            | .ok bs =>
+              match _hqb : bindTermBinders F bs.toList with
+              | .error e => .error e
+              | .ok (ls, xs) =>
+                match _hqbody : getObj j "body" with
+                | .error e => .error e
+                | .ok body =>
+                  match decodeTerm { F with locals := ls } .bool body with
+                  | .error e => .error e
+                  | .ok be => .ok (wrapQuantTerm (q == "Lforall") xs be)
+          | _ =>
+            fail s!"a quantified term in {j.compress} where the context expects \
+              {repr t}: an EasyCrypt quantifier is a proposition, which is a \
+              value of bool"
+        else
+          fail s!"the quantifier '{q}' in term position in {j.compress}: EcTerm \
+            has no binder of that sort"
+      | .error e => .error e
     else if kind = "Fpr" then
       fail s!"probability in term position in {j.compress}: a probability is an \
         EcProb, not an EcTerm"
@@ -869,6 +1190,29 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                   absent value"
             else if F.tables.witnessPaths.contains p then
               .ok (.lit default)
+            -- `finite_type` and `predT` are nullary reads whose meaning comes
+            -- from `Finite.ec` and `Logic.ec` rather than from a table entry:
+            -- the first takes its type by type argument, the second is the
+            -- constant-true predicate and is read where a predicate is passed.
+            else if F.paths.finiteTypeOps.contains p then
+              match t, nullaryTargs j with
+              | .bool, [aJ] =>
+                match decodeTy F.tables aJ with
+                | .error e => .error e
+                | .ok a => .ok (.finiteType a)
+              | .bool, ts =>
+                fail s!"'{p}' read with {ts.length} type argument(s) in \
+                  {j.compress}: finiteness is asserted of one carrier"
+              | _, _ =>
+                fail s!"'{p}' at type {repr t}: whether a carrier is enumerated \
+                  by a list is a boolean"
+            else if F.paths.predTOps.contains p then
+              match t with
+              | .arrow a .bool =>
+                .ok (.lam a (p ++ "#1") (.lit (t := .bool) true))
+              | _ =>
+                fail s!"'{p}' at type {repr t}: the predicate every value \
+                  satisfies is a function into bool"
             else
             match List.lookup p F.tables.constPaths with
             | none =>
@@ -895,7 +1239,24 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                   -- so neither can capture a variable the statement binds.
                   let n1 := p ++ "#1"
                   let n2 := p ++ "#2"
+                  let n3 := p ++ "#3"
                   match t with
+                  | .arrow a (.arrow b (.arrow c r)) =>
+                    if h1 : s.arg = EcTy.prod a (.prod b c) then
+                      if h2 : s.res = r then
+                        .ok (.lam a n1 (.lam b n2 (.lam c n3
+                          (EcTerm.castTy h2 (.opApp p s
+                            (EcTerm.castTy h1.symm
+                              (.pair (.var a n1)
+                                (.pair (.var b n2) (.var c n3)))))))))
+                      else
+                        fail s!"the abstract operator '{p}' is declared at result \
+                          type {repr s.res} and read as a function returning \
+                          {repr r}"
+                    else
+                      fail s!"the abstract operator '{p}' is declared at argument \
+                        type {repr s.arg} and read as a function of three \
+                        arguments nesting as {repr (EcTy.prod a (EcTy.prod b c))}"
                   | .arrow a (.arrow b c) =>
                     if h1 : s.arg = EcTy.prod a b then
                       if h2 : s.res = c then
@@ -938,18 +1299,80 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                 -- A concrete declaration of the theory the statement comes from
                 -- is a definition, read as the term it abbreviates. The body is
                 -- decoded against the tables with this definition dropped.
+                --
+                -- A definition read with no argument is being passed as a
+                -- function, and `EcTy.arrow` is the code it is read at: the
+                -- reading is one lambda per parameter over the body, with each
+                -- parameter bound to the lambda's own variable. The binder names
+                -- carry a `#`, which no source identifier holds, so neither can
+                -- capture a variable the statement binds.
                 match _hdc : List.lookup p F.tables.defOpPaths with
                 | some d =>
-                  if d.params ≠ [] then
-                    fail s!"the operator '{p}' is defined with \
-                      {d.params.length} parameter(s) and read as a value: EcTy \
-                      has no arrow code, so an unapplied definition has no image"
-                  else
-                    match decodeTerm (F.withoutDefOp p) t d.body with
+                  let n1 := p ++ "#1"
+                  let n2 := p ++ "#2"
+                  match d.params, t with
+                  | [], t' =>
+                    match decodeTerm (F.withoutDefOp p) t' d.body with
                     | .ok e => .ok e
                     | .error m =>
                       fail s!"the operator '{p}' is defined by a term that does \
                         not decode: {m}"
+                  | [(x, u)], .arrow a c =>
+                    if hu : u = a then
+                      if hres : d.res = c then
+                        match _hb1 : bindOpParams (F.withoutDefOp p) p d.params with
+                        | .error e => .error e
+                        | .ok F' =>
+                          match decodeTerm F' d.res d.body with
+                          | .error m =>
+                            fail s!"the operator '{p}' is defined by a term that \
+                              does not decode: {m}"
+                          | .ok be =>
+                            .ok (.lam a n1
+                              (wrapOpLets
+                                [(opParamName x,
+                                  ⟨u, EcTerm.castTy hu.symm (.var a n1)⟩)]
+                                (EcTerm.castTy hres be)))
+                      else
+                        fail s!"the operator '{p}' is defined at result type \
+                          {repr d.res} and read as a function returning {repr c}"
+                    else
+                      fail s!"the operator '{p}' is defined at parameter type \
+                        {repr u} and read as a function of {repr a}"
+                  | [(x, u), (y, w)], .arrow a (.arrow b c) =>
+                    if hu : u = a then
+                      if hw : w = b then
+                        if hres : d.res = c then
+                          match _hb2 : bindOpParams (F.withoutDefOp p) p d.params with
+                          | .error e => .error e
+                          | .ok F' =>
+                            match decodeTerm F' d.res d.body with
+                            | .error m =>
+                              fail s!"the operator '{p}' is defined by a term \
+                                that does not decode: {m}"
+                            | .ok be =>
+                              .ok (.lam a n1 (.lam b n2
+                                (wrapOpLets
+                                  [(opParamName x,
+                                    ⟨u, EcTerm.castTy hu.symm (.var a n1)⟩),
+                                   (opParamName y,
+                                    ⟨w, EcTerm.castTy hw.symm (.var b n2)⟩)]
+                                  (EcTerm.castTy hres be))))
+                        else
+                          fail s!"the operator '{p}' is defined at result type \
+                            {repr d.res} and read as a function returning \
+                            {repr c}"
+                      else
+                        fail s!"the operator '{p}' is defined at second \
+                          parameter type {repr w} and read as a function of \
+                          {repr b}"
+                    else
+                      fail s!"the operator '{p}' is defined at parameter type \
+                        {repr u} and read as a function of {repr a}"
+                  | ps, _ =>
+                    fail s!"the operator '{p}' is defined with {ps.length} \
+                      parameter(s) and read at type {repr t}, which is not an \
+                      arrow code of that many arguments"
                 | none =>
                   fail s!"unknown nullary operator path '{p}' in {j.compress}: the \
                     ingestion's constant table has no entry and no operator \
@@ -1004,6 +1427,10 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
             match _htup : getArr j "args" with
             | .error e => .error e
             | .ok arr =>
+              -- A tuple of more than two components is the right-nested pair its
+              -- code already is: `decodeTy` nests an n-ary `Ttuple` as
+              -- `t₁ × (t₂ × … × tₙ)`, so the components decode against the
+              -- code's own spine.
               match arr.toList.attach with
               | [⟨x, _⟩, ⟨y, _⟩] =>
                 match decodeTerm F a x with
@@ -1012,7 +1439,42 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                   match decodeTerm F b y with
                   | .error e => .error e
                   | .ok ye => .ok (.pair xe ye)
-              | _ => fail s!"tuple of {arr.size} components at a binary product code"
+              | [⟨x, _⟩, ⟨y, _⟩, ⟨z, _⟩] =>
+                match b with
+                | .prod b1 b2 =>
+                  match decodeTerm F a x with
+                  | .error e => .error e
+                  | .ok xe =>
+                    match decodeTerm F b1 y with
+                    | .error e => .error e
+                    | .ok ye =>
+                      match decodeTerm F b2 z with
+                      | .error e => .error e
+                      | .ok ze => .ok (.pair xe (.pair ye ze))
+                | _ =>
+                  fail s!"tuple of 3 components at the code {repr t}, whose \
+                    second component is not itself a product"
+              | [⟨x, _⟩, ⟨y, _⟩, ⟨z, _⟩, ⟨w, _⟩] =>
+                match b with
+                | .prod b1 (.prod b2 b3) =>
+                  match decodeTerm F a x with
+                  | .error e => .error e
+                  | .ok xe =>
+                    match decodeTerm F b1 y with
+                    | .error e => .error e
+                    | .ok ye =>
+                      match decodeTerm F b2 z with
+                      | .error e => .error e
+                      | .ok ze =>
+                        match decodeTerm F b3 w with
+                        | .error e => .error e
+                        | .ok we => .ok (.pair xe (.pair ye (.pair ze we)))
+                | _ =>
+                  fail s!"tuple of 4 components at the code {repr t}, whose \
+                    spine is not three nested products"
+              | _ =>
+                fail s!"tuple of {arr.size} components: the decoder nests two, \
+                  three and four against the code's own spine"
           | _ => fail s!"tuple at type {repr t}: only a prod code has one"
         else if kind = "Fproj" then
           match _htgt : getObj j "target" with
@@ -1101,6 +1563,276 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
               fail s!"tuple let pattern in {j.compress}: EcTerm.letIn binds a \
                 single variable"
             | .ok k => fail s!"unsupported let pattern kind '{k}' in {patJ.compress}"
+        -- `support d x` and `omap f o` are read ahead of the operator tables:
+        -- each path also carries an operator declaration whose body is outside
+        -- the fragment, and the primitive image is the one to take. The element
+        -- code comes off the argument's own type field, which the result — a
+        -- boolean for `support`, the image option for `omap` — does not fix.
+        else if isAppOfAny F.paths.supportOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .bool =>
+            match _hsup : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨dJ, _⟩, ⟨xJ, _⟩] =>
+                match decodeTyField F.tables dJ "ty" with
+                | .error e => .error e
+                | .ok (.distr a) =>
+                  match decodeTerm F (.distr a) dJ with
+                  | .error e => .error e
+                  | .ok de =>
+                    match decodeTerm F a xJ with
+                    | .error e => .error e
+                    | .ok xe => .ok (.support de xe)
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not a distribution"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: membership in a distribution's \
+              support is a boolean"
+        else if isAppOfAny F.paths.optionMapOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .option b =>
+            match _homap : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨fJ, _⟩, ⟨oJ, _⟩] =>
+                match decodeTyField F.tables oJ "ty" with
+                | .error e => .error e
+                | .ok (.option a) =>
+                  match decodeTerm F (.arrow a b) fJ with
+                  | .error e => .error e
+                  | .ok fe =>
+                    match decodeTerm F (.option a) oJ with
+                    | .error e => .error e
+                    | .ok oe => .ok (.optionMap fe oe)
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not an option"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: the image of an option is an option"
+        -- `dmap`, `dlet` and `to_seq` are read ahead of the operator tables for
+        -- the same reason as `support`: each also carries an operator
+        -- declaration whose body is outside the fragment. The source code of a
+        -- distribution argument comes off that argument's own type field, which
+        -- the result code does not fix; `to_seq`'s element code does come off
+        -- the result, which is a list at it.
+        else if isAppOfAny F.paths.distrMapOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .distr b =>
+            match _hdm : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨dJ, _⟩, ⟨fJ, _⟩] =>
+                match decodeTyField F.tables dJ "ty" with
+                | .error e => .error e
+                | .ok (.distr a) =>
+                  match decodeTerm F (.distr a) dJ with
+                  | .error e => .error e
+                  | .ok de =>
+                    match decodeTerm F (.arrow a b) fJ with
+                    | .error e => .error e
+                    | .ok fe => .ok (.distrMap de fe)
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not a distribution"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: the pushforward of a distribution \
+              along a function is a distribution"
+        else if isAppOfAny F.paths.distrLetOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .distr b =>
+            match _hdl : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨dJ, _⟩, ⟨fJ, _⟩] =>
+                match decodeTyField F.tables dJ "ty" with
+                | .error e => .error e
+                | .ok (.distr a) =>
+                  match decodeTerm F (.distr a) dJ with
+                  | .error e => .error e
+                  | .ok de =>
+                    match decodeTerm F (.arrow a (.distr b)) fJ with
+                    | .error e => .error e
+                    | .ok fe => .ok (.distrLet de fe)
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not a distribution"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: the bind of a distribution with a \
+              distribution-valued function is a distribution"
+        else if isAppOfAny F.paths.toSeqOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .list a =>
+            match _hts : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨pJ, _⟩] =>
+                match decodeTerm F (.arrow a .bool) pJ with
+                | .error e => .error e
+                | .ok pe => .ok (.toSeq pe)
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: the values a predicate holds of are \
+              a list"
+        -- List catenation, the independent product of two distributions and a
+        -- distribution conditioned on avoiding a predicate are read ahead of the
+        -- operator tables for the reason `support` is: each also carries an
+        -- operator declaration whose body is outside the fragment.
+        else if isAppOfAny F.paths.listCatOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .list a =>
+            match _hcat : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨xJ, _⟩, ⟨yJ, _⟩] =>
+                match decodeTerm F (.list a) xJ with
+                | .error e => .error e
+                | .ok xe =>
+                  match decodeTerm F (.list a) yJ with
+                  | .error e => .error e
+                  | .ok ye => .ok (.listCat xe ye)
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: the catenation of two lists is a \
+              list"
+        else if isAppOfAny F.paths.distrProdOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .distr (.prod a b) =>
+            match _hdpr : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨xJ, _⟩, ⟨yJ, _⟩] =>
+                match decodeTerm F (.distr a) xJ with
+                | .error e => .error e
+                | .ok xe =>
+                  match decodeTerm F (.distr b) yJ with
+                  | .error e => .error e
+                  | .ok ye => .ok (.distrProd xe ye)
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: the independent product of two \
+              distributions is a distribution over pairs"
+        else if isAppOfAny F.paths.distrExceptOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .distr a =>
+            match _hdex : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨dJ, _⟩, ⟨pJ, _⟩] =>
+                match decodeTerm F (.distr a) dJ with
+                | .error e => .error e
+                | .ok de =>
+                  match decodeTerm F (.arrow a .bool) pJ with
+                  | .error e => .error e
+                  | .ok pe => .ok (.distrExcept de pe)
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: a distribution conditioned on \
+              avoiding a predicate is a distribution"
+        -- `dom` and `m.[k]` at the spellings `FMap.ec`'s own statements write
+        -- them under. The key code comes off the map argument's own type field;
+        -- `dom` read at one argument is the predicate its definition
+        -- `dom m = fun x => m.[x] <> None` gives, as a lambda over the key.
+        else if isAppOfAny F.paths.mapDomOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .bool =>
+            match _hdom2 : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                match decodeTyField F.tables mJ "ty" with
+                | .error e => .error e
+                | .ok (.map a b) =>
+                  match decodeTerm F (.map a b) mJ with
+                  | .error e => .error e
+                  | .ok me =>
+                    match decodeTerm F a kJ with
+                    | .error e => .error e
+                    | .ok ke => .ok (.mapMem me ke)
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not a finite map"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, .arrow a .bool =>
+            match _hdom1 : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨mJ, _⟩] =>
+                match decodeTyField F.tables mJ "ty" with
+                | .error e => .error e
+                | .ok (.map a' b) =>
+                  if hk : a' = a then
+                    match decodeTerm F (.map a' b) mJ with
+                    | .error e => .error e
+                    | .ok me =>
+                      .ok (.lam a (p ++ "#1")
+                        (.mapMem me
+                          (EcTerm.castTy hk.symm (.var a (p ++ "#1")))))
+                  else
+                    fail s!"'{p}' reads a map keyed by {repr a'}, context \
+                      expects a predicate on {repr a}"
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not a finite map"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 1"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: whether a key is bound in a finite \
+              map is a boolean"
+        else if isAppOfAny F.paths.mapLookupOps j then
+          match appHeadPath j, t with
+          | .error e, _ => .error e
+          | .ok p, .option b =>
+            match _hlk : getArr j "args" with
+            | .error e => .error e
+            | .ok arr =>
+              match arr.toList.attach with
+              | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                match decodeTyField F.tables mJ "ty" with
+                | .error e => .error e
+                | .ok (.map a b') =>
+                  if hb : b' = b then
+                    match decodeTerm F (.map a b') mJ with
+                    | .error e => .error e
+                    | .ok me =>
+                      match decodeTerm F a kJ with
+                      | .error e => .error e
+                      | .ok ke =>
+                        .ok (EcTerm.castTy (congrArg EcTy.option hb)
+                          (.mapFind me ke))
+                  else
+                    fail s!"'{p}' reads a map of values of type {repr b'}, \
+                      context expects an option of {repr b}"
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not a finite map"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+          | .ok p, _ =>
+            fail s!"'{p}' at type {repr t}: the binding of a key in a finite \
+              map is an option"
         else if kind = "Fapp" then
           match _hfh : getObj j "f" with
           | .error e => .error e
@@ -1148,8 +1880,50 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                               {arr.size} arguments, whose types nest as \
                               {repr n.1}"
                     else
-                      fail s!"the abstract operator '{p}' is declared at result \
-                        type {repr s.res}, context expects {repr t}"
+                      -- Read at an arrow spine ending in the declared result,
+                      -- the operator is partially applied: the arguments written
+                      -- here, and a lambda for each one still missing. The two
+                      -- together nest into the declared argument code, which is
+                      -- the right-nested product of every argument.
+                      match t with
+                      | .arrow b2 (.arrow b3 (.arrow b4 r)) =>
+                        if hr : r = s.res then
+                          match _hpa : getArr j "args" with
+                          | .error e => .error e
+                          | .ok arr =>
+                            match arr.toList.attach.mapM (fun ⟨x, _⟩ =>
+                                match decodeTyField F.tables x "ty" with
+                                | .error e => Except.error e
+                                | .ok u =>
+                                  match decodeTerm F u x with
+                                  | .error e => Except.error e
+                                  | .ok xe => Except.ok (Sigma.mk u xe)) with
+                            | .error e => .error e
+                            | .ok [] =>
+                              fail s!"the abstract operator '{p}' is applied to \
+                                no arguments in {j.compress}"
+                            | .ok (a :: rest) =>
+                              let m2 := p ++ "#e2"
+                              let m3 := p ++ "#e3"
+                              let m4 := p ++ "#e4"
+                              let full := EcTerm.nestArgs a
+                                (rest ++ [⟨b2, .var b2 m2⟩, ⟨b3, .var b3 m3⟩,
+                                          ⟨b4, .var b4 m4⟩])
+                              if harg : full.1 = s.arg then
+                                .ok (.lam b2 m2 (.lam b3 m3 (.lam b4 m4
+                                  (EcTerm.castTy hr.symm
+                                    (.opApp p s (EcTerm.castTy harg full.2))))))
+                              else
+                                fail s!"the abstract operator '{p}' is declared \
+                                  at argument type {repr s.arg} and read applied \
+                                  to {arr.size} arguments awaiting three, whose \
+                                  types nest as {repr full.1}"
+                        else
+                          fail s!"the abstract operator '{p}' is declared at \
+                            result type {repr s.res}, context expects {repr t}"
+                      | _ =>
+                        fail s!"the abstract operator '{p}' is declared at result \
+                          type {repr s.res}, context expects {repr t}"
                   | none =>
                     -- A concrete declaration is a definition, and its read is
                     -- the body under one binder per parameter. The arguments are
@@ -1336,6 +2110,31 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                           | .error e => .error e
                           | .ok ye => .ok (.intLe xe ye)
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intMin, .int =>
+                      -- The same reading the expression layer gives `min`, at
+                      -- the same definition from `Int.ec`. Registering the path
+                      -- in `opPaths` stops `defOpPaths` unfolding the source's
+                      -- definition here, so this arm has to reproduce it or the
+                      -- term layer would lose what it already reads.
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.ite (.bnot (.intLe ye xe)) xe ye)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    | .intMax, .int =>
+                      match arr.toList.attach with
+                      | [⟨x, _⟩, ⟨y, _⟩] =>
+                        match decodeTerm F .int x with
+                        | .error e => .error e
+                        | .ok xe =>
+                          match decodeTerm F .int y with
+                          | .error e => .error e
+                          | .ok ye => .ok (.ite (.bnot (.intLe ye xe)) ye xe)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
                     | .intLt, .bool =>
                       match arr.toList.attach with
                       | [⟨x, _⟩, ⟨y, _⟩] =>
@@ -1362,6 +2161,48 @@ def decodeTerm (F : FormTables) (t : EcTy) (j : Json) : Except String (EcTerm t)
                           fail s!"'{p}' is applied to a value of type {repr u}, \
                             which is not a finite map"
                       | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    -- `m.[k]` reads the key code off the map argument, which the
+                    -- result — the value code as an option — does not fix, and
+                    -- the value code from the result, which the two have to
+                    -- agree on.
+                    | .mapLookup, .option b =>
+                      match arr.toList.attach with
+                      | [⟨mJ, _⟩, ⟨kJ, _⟩] =>
+                        match decodeTyField F.tables mJ "ty" with
+                        | .error e => .error e
+                        | .ok (.map a b') =>
+                          if hb : b' = b then
+                            match decodeTerm F (.map a b') mJ with
+                            | .error e => .error e
+                            | .ok me =>
+                              match decodeTerm F a kJ with
+                              | .error e => .error e
+                              | .ok ke =>
+                                .ok (EcTerm.castTy (congrArg EcTy.option hb)
+                                  (.mapFind me ke))
+                          else
+                            fail s!"'{p}' reads a map of values of type \
+                              {repr b'}, context expects an option of \
+                              {repr b}"
+                        | .ok u =>
+                          fail s!"'{p}' is applied to a value of type {repr u}, \
+                            which is not a finite map"
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
+                    -- `m.[k <- v]` returns a map, so the result code fixes both
+                    -- the key and the value code.
+                    | .mapSet, .map a b =>
+                      match arr.toList.attach with
+                      | [⟨mJ, _⟩, ⟨kJ, _⟩, ⟨vJ, _⟩] =>
+                        match decodeTerm F (.map a b) mJ with
+                        | .error e => .error e
+                        | .ok me =>
+                          match decodeTerm F a kJ with
+                          | .error e => .error e
+                          | .ok ke =>
+                            match decodeTerm F b vJ with
+                            | .error e => .error e
+                            | .ok ve => .ok (.mapSet me ke ve)
+                      | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 3"
                     | .listCons, .list a =>
                       match arr.toList.attach with
                       | [⟨xJ, _⟩, ⟨lJ, _⟩] =>
@@ -1778,7 +2619,13 @@ A `GTmodty` binder's interface is looked up in `F.modTypes` by the name its
 absent. The node carries the signature with the type's arguments substituted in,
 so the second route also serves a binder at a parameterised module type, whose
 declaration `decodeModTypeInterface` rejects and which therefore never enters the
-table. -/
+table.
+
+A `GTmodty` binder's restriction is read in the scope enclosing the binder, so a
+restriction against an outer module binder resolves against that binder rather
+than against the ingestion's module table. The binder is quantified together with
+its footprint when the body needs it: when the body compares `glob` of it, or
+restricts a nested binder against it (`EcForm.needsFootprintOf`). -/
 def bindBinder (F : FormTables) (q : String) (b : Json) :
     Except String (FormTables × (EcForm → EcForm)) := do
   let nm ← getStr b "name"
@@ -1823,20 +2670,71 @@ def bindBinder (F : FormTables) (q : String) (b : Json) :
           s!"the module type '{mtName}' is not in the ingestion's module-type \
             table, and its own signature does not decode: {m}")
     if q = "Lforall" then
-      let gs ← restrGlobals F g
+      let r ← restrModules F g
       let F' := F.bindModBinder st nm I
-      match gs with
+      match r with
       | none =>
         .ok (F', fun body =>
-          if body.namesGlobOf nm then .allModOn nm I body else .allMod nm I body)
-      | some gs =>
+          if body.needsFootprintOf nm then .allModOn nm I body else .allMod nm I body)
+      | some r =>
         .ok (F', fun body =>
-          if body.namesGlobOf nm then .allModRestrOn nm I gs body
-          else .allModRestr nm I gs body)
+          if r.binders.isEmpty then
+            if body.needsFootprintOf nm then .allModRestrOn nm I r.globals body
+            else .allModRestr nm I r.globals body
+          else
+            if body.needsFootprintOf nm then .allModRestrOfOn nm I r body
+            else .allModRestrOf nm I r body)
     else
       fail s!"the module binder '{nm}' under '{q}': EcForm quantifies a module \
         universally only"
   | k => fail s!"unknown binder sort '{k}' in {g.compress}"
+
+/-- The `GTmodty` binder `S` at the module type `Top.I`, restricted away from the
+modules `ms`. -/
+private def jModBinder (ms : List String) : Json :=
+  Json.mkObj
+    [("name", Json.str "S"), ("stamp", Json.num 1),
+     ("gty", Json.mkObj
+       [("kind", Json.str "GTmodty"),
+        ("modtype", Json.mkObj
+          [("kind", Json.str "ModuleType"), ("name", Json.str "Top.I")]),
+        ("restr", jUseRestr ms)])]
+
+/-- The quantifier a binder wraps the body `f` in. -/
+private def chkBinderNode (ms : List String) (f : EcForm) : Option EcForm :=
+  match bindBinder chkRestrTables "Lforall" (jModBinder ms) with
+  | .ok (_, w) => some (w f)
+  | .error _ => none
+
+-- A restriction against concrete modules alone binds the module without a
+-- footprint, as long as the body reads none.
+#guard (match chkBinderNode ["Top.M"] .tru with
+        | some (.allModRestr "S" _ gs .tru) => gs.map (·.id) == [7]
+        | _ => false)
+
+-- A restriction against a module binder in scope is carried by the binder,
+-- whose footprint the quantifier reads.
+#guard (match chkBinderNode ["A"] .tru with
+        | some (.allModRestrOf "S" _ r .tru) => r.binders == ["A"]
+        | _ => false)
+
+-- A body that restricts a nested binder against `S` makes `S` carry its own
+-- footprint, as a body comparing `glob S` does.
+#guard (match chkBinderNode ["Top.M"]
+            (.allModRestrOf "T" chkRestrInterface
+              { globals := [], binders := ["S"] } .tru) with
+        | some (.allModRestrOn "S" _ gs _) => gs.map (·.id) == [7]
+        | _ => false)
+
+#guard (match chkBinderNode ["A"]
+            (.allModRestrOf "T" chkRestrInterface
+              { globals := [], binders := ["S"] } .tru) with
+        | some (.allModRestrOfOn "S" _ r _) => r.binders == ["A"]
+        | _ => false)
+
+-- A restriction against a module the tables do not hold rejects the binder
+-- rather than giving it a footprint the source does not name.
+#guard (chkBinderNode ["Top.Absent"] .tru).isNone
 
 /-- The tables extended by every binder of a quantifier node, and the chain of
 quantifier nodes its body sits under. -/
@@ -2731,10 +3629,29 @@ def decodeProb (F : FormTables) (j : Json) : Except String EcProb :=
               match decodeRealLit F j with
               | .error e => .error e
               | .ok r => .ok (.const r)
+            else if F.paths.muOps.contains p then
+              -- `mu d P` reads the element code off its distribution argument,
+              -- which the result — a real — does not fix, and the predicate at
+              -- the arrow code that element gives.
+              match arr.toList.attach with
+              | [⟨dJ, _⟩, ⟨pJ, _⟩] =>
+                match decodeTyField F.tables dJ "ty" with
+                | .error e => .error e
+                | .ok (.distr a) =>
+                  match decodeTerm F (.distr a) dJ with
+                  | .error e => .error e
+                  | .ok de =>
+                    match decodeTerm F (.arrow a .bool) pJ with
+                    | .error e => .error e
+                    | .ok pe => .ok (.mu de pe)
+                | .ok u =>
+                  fail s!"'{p}' is applied to a value of type {repr u}, which \
+                    is not a distribution"
+              | _ => fail s!"'{p}' applied to {arr.size} arguments, expected 2"
             else
               fail s!"the real operator '{p}' in {j.compress}: EcProb has \
-                Pr[…], a constant, a parameter, a sum, a product and an \
-                absolute difference, and nothing else"
+                Pr[…], a constant, a parameter, a sum, a product, an absolute \
+                difference and `mu`, and nothing else"
     else
       fail s!"the node kind '{kind}' in probability position in {j.compress}"
 termination_by (F.tables.defOpPaths.length, F.tables.polyOpPaths.length, jsonSize j)
@@ -3546,6 +4463,235 @@ private def jFormIntList : Json :=
         | .ok (.lit v) => v == (default : EcTy.int.interp)
         | _ => false)
 
+/-- The type node of `int -> int`. -/
+private def jFormIntFun : Json :=
+  Json.mkObj [("kind", Json.str "Tfun"), ("dom", jFormInt), ("cod", jFormInt)]
+
+/-- The lambda `fun x => x` at `int -> int`. -/
+private def jFormIntId : Json :=
+  Json.mkObj
+    [("ty", jFormIntFun), ("kind", Json.str "Fquant"),
+     ("quant", Json.str "Llambda"),
+     ("binders", Json.arr
+       #[Json.mkObj [("name", Json.str "x"), ("stamp", Json.num 91)]]),
+     ("body", Json.mkObj
+        [("ty", jFormInt), ("kind", Json.str "Flocal"),
+         ("name", Json.str "x"), ("stamp", Json.num 91)])]
+
+/-- `omap f o` at the result type node `res`, over the function node `f` and the
+option node `o`. -/
+private def jFormOmapAt (res f o : Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntFun),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormIntOption),
+              ("cod", jFormIntOption)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Logic.omap"),
+        ("targs", Json.arr #[jFormInt, jFormInt])]),
+     ("args", Json.arr #[f, o])]
+
+-- `omap` reads the element code off its option argument, which is where the
+-- result does not carry it.
+#guard (match decodeTerm bareTables (.option .int)
+            (jFormOmapAt jFormIntOption jFormIntId
+              (jFormNullary jFormIntOption "Top.Logic.None")) with
+        | .ok (.optionMap (a := .int) _ o) =>
+            o.litValue == some (EcTy.noneVal (a := .int))
+        | _ => false)
+
+-- The function argument is read at the arrow from the element code to the
+-- result's, so the lambda becomes a binder over a read of that binder.
+#guard (match decodeTerm bareTables (.option .int)
+            (jFormOmapAt jFormIntOption jFormIntId
+              (jFormNullary jFormIntOption "Top.Logic.None")) with
+        | .ok (.optionMap (.lam .int x (.var .int y)) _) => x == y
+        | _ => false)
+
+-- An argument that is no option is rejected, rather than read at the result's
+-- element code.
+#guard (match decodeTerm bareTables (.option .int)
+            (jFormOmapAt jFormIntOption jFormIntId
+              (jFormNullary jFormInt "Top.Pervasive.witness")) with
+        | .error m => m.startsWith "ec-import: 'Top.Logic.omap' is applied to"
+        | _ => false)
+
+-- At a code that is no option the application is rejected: the image of an
+-- option is an option.
+#guard (match decodeTerm bareTables .int
+            (jFormOmapAt jFormInt jFormIntId
+              (jFormNullary jFormIntOption "Top.Logic.None")) with
+        | .error m => m.startsWith "ec-import: 'Top.Logic.omap' at type"
+        | _ => false)
+
+/-- The `int distr` type node. -/
+private def jFormIntDistr : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Distr.distr"),
+              ("args", Json.arr #[jFormInt])]
+
+/-- The `int -> bool` type node. -/
+private def jFormIntPred : Json :=
+  Json.mkObj [("kind", Json.str "Tfun"), ("dom", jFormInt), ("cod", jFormBool)]
+
+/-- The `int -> int distr` type node. -/
+private def jFormIntToDistrTy : Json :=
+  Json.mkObj [("kind", Json.str "Tfun"), ("dom", jFormInt),
+              ("cod", jFormIntDistr)]
+
+/-- The lambda `fun x => witness` at `int -> int distr`. -/
+private def jFormIntToDistr : Json :=
+  Json.mkObj
+    [("ty", jFormIntToDistrTy), ("kind", Json.str "Fquant"),
+     ("quant", Json.str "Llambda"),
+     ("binders", Json.arr
+       #[Json.mkObj [("name", Json.str "x"), ("stamp", Json.num 92)]]),
+     ("body", jFormNullary jFormIntDistr "Top.Pervasive.witness")]
+
+/-- `dmap d f` at the result type node `res`, over the distribution node `d` and
+the function node `f`. -/
+private def jFormDmapAt (res d f : Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntDistr),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormIntFun), ("cod", res)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Distr.dmap"),
+        ("targs", Json.arr #[jFormInt, jFormInt])]),
+     ("args", Json.arr #[d, f])]
+
+-- `dmap` reads the source code off its distribution argument and the function
+-- at the arrow from that code to the result's.
+#guard (match decodeTerm bareTables (.distr .int)
+            (jFormDmapAt jFormIntDistr
+              (jFormNullary jFormIntDistr "Top.Pervasive.witness")
+              jFormIntId) with
+        | .ok (.distrMap (a := .int) (.lit _) (.lam .int x (.var .int y))) =>
+            x == y
+        | _ => false)
+
+-- A first argument that is no distribution is rejected, rather than read at the
+-- result's carrier.
+#guard (match decodeTerm bareTables (.distr .int)
+            (jFormDmapAt jFormIntDistr
+              (jFormNullary jFormInt "Top.Pervasive.witness") jFormIntId) with
+        | .error m => m.startsWith "ec-import: 'Top.Distr.dmap' is applied to"
+        | _ => false)
+
+-- At a code that is no distribution the application is rejected: a pushforward
+-- is a distribution.
+#guard (match decodeTerm bareTables .int
+            (jFormDmapAt jFormInt
+              (jFormNullary jFormIntDistr "Top.Pervasive.witness")
+              jFormIntId) with
+        | .error m => m.startsWith "ec-import: 'Top.Distr.dmap' at type"
+        | _ => false)
+
+/-- `dlet d f` at the result type node `res`, over the distribution node `d` and
+the distribution-valued function node `f`. -/
+private def jFormDletAt (res d f : Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntDistr),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormIntToDistrTy),
+              ("cod", res)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Distr.dlet"),
+        ("targs", Json.arr #[jFormInt, jFormInt])]),
+     ("args", Json.arr #[d, f])]
+
+-- `dlet` reads its function at the arrow from the source code into the result,
+-- so the lambda becomes a binder over a distribution term.
+#guard (match decodeTerm bareTables (.distr .int)
+            (jFormDletAt jFormIntDistr
+              (jFormNullary jFormIntDistr "Top.Pervasive.witness")
+              jFormIntToDistr) with
+        | .ok (.distrLet (a := .int) (.lit _) (.lam .int _ (.lit _))) => true
+        | _ => false)
+
+-- At a code that is no distribution the application is rejected: a bind is a
+-- distribution.
+#guard (match decodeTerm bareTables .int
+            (jFormDletAt jFormInt
+              (jFormNullary jFormIntDistr "Top.Pervasive.witness")
+              jFormIntToDistr) with
+        | .error m => m.startsWith "ec-import: 'Top.Distr.dlet' at type"
+        | _ => false)
+
+-- `predT` is the predicate every value satisfies, read unapplied at an arrow
+-- code into `bool`.
+#guard (match decodeTerm bareTables (.arrow .int .bool)
+            (jFormNullary jFormIntPred "Top.Logic.predT") with
+        | .ok (.lam .int _ (.lit v)) => v == true
+        | _ => false)
+
+-- At a code that is no such arrow the read is rejected.
+#guard (match decodeTerm bareTables .bool
+            (jFormNullary jFormBool "Top.Logic.predT") with
+        | .error m => m.startsWith "ec-import: 'Top.Logic.predT' at type"
+        | _ => false)
+
+/-- `to_seq p` at the result type node `res`, over the predicate node `p`. -/
+private def jFormToSeqAt (res p : Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntPred), ("cod", res)]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Finite.to_seq"),
+        ("targs", Json.arr #[jFormInt])]),
+     ("args", Json.arr #[p])]
+
+-- `to_seq` reads its element code off the result, which is a list at it, and
+-- its predicate at the arrow from that code into `bool`.
+#guard (match decodeTerm bareTables (.list .int)
+            (jFormToSeqAt jFormIntList
+              (jFormNullary jFormIntPred "Top.Logic.predT")) with
+        | .ok (.toSeq (a := .int) (.lam .int _ (.lit v))) => v == true
+        | _ => false)
+
+-- At a code that is no list the application is rejected: the values a predicate
+-- holds of are a list.
+#guard (match decodeTerm bareTables .int
+            (jFormToSeqAt jFormInt
+              (jFormNullary jFormIntPred "Top.Logic.predT")) with
+        | .error m => m.startsWith "ec-import: 'Top.Finite.to_seq' at type"
+        | _ => false)
+
+/-- `finite_type` read at the result type node `res` with the type arguments
+`targs`. -/
+private def jFormFiniteTypeAt (res : Json) (targs : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fop"),
+     ("path", Json.str "Top.Finite.finite_type"), ("targs", Json.arr targs)]
+
+-- `finite_type` is nullary and carries the code it asserts finiteness of as its
+-- type argument, which the term's own `bool` code does not fix.
+#guard (match decodeTerm bareTables .bool
+            (jFormFiniteTypeAt jFormBool #[jFormBool]) with
+        | .ok (.finiteType .bool) => true
+        | _ => false)
+
+-- A read with no type argument is rejected, rather than resolved at the code
+-- the context asks for.
+#guard (match decodeTerm bareTables .bool
+            (jFormFiniteTypeAt jFormBool #[]) with
+        | .error m =>
+            m.startsWith "ec-import: 'Top.Finite.finite_type' read with"
+        | _ => false)
+
+-- At a code that is no boolean the read is rejected.
+#guard (match decodeTerm bareTables .int
+            (jFormFiniteTypeAt jFormInt #[jFormBool]) with
+        | .error m => m.startsWith "ec-import: 'Top.Finite.finite_type' at type"
+        | _ => false)
+
 /-- An integer literal node at the `int` code. -/
 private def jFormIntLit (v : String) : Json :=
   Json.mkObj [("ty", jFormInt), ("kind", Json.str "Fint"), ("value", Json.str v)]
@@ -3636,6 +4782,333 @@ private def jFormIntPair : Json :=
             (jFormIntApp jFormBool "Top.CoreInt.lt"
               #[jFormIntLit "1", jFormIntLit "2"]) with
         | .ok (.bnot (.intLe a b)) => isIntLit a 2 && isIntLit b 1
+        | _ => false)
+
+/-! ### Finite-map lookup and update in a term -/
+
+/-- The type node of `(int, bool) fmap`. -/
+private def jFormIntBoolMap : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str "Top.FMap.fmap"),
+              ("args", Json.arr #[jFormInt, jFormBool])]
+
+/-- The type node of `bool option`. -/
+private def jFormBoolOption : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"), ("path", Json.str "Top.Logic.option"),
+              ("args", Json.arr #[jFormBool])]
+
+/-- The empty finite map at the `(int, bool) fmap` type node. -/
+private def jFormEmptyMap : Json := jFormNullary jFormIntBoolMap "Top.FMap.empty"
+
+/-- `m.[k]` at the result node `res`, over the arguments `args`. -/
+private def jFormMapLookupAt (res : Json) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntBoolMap),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormInt), ("cod", res)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.FMap._.[_]"),
+        ("targs", Json.arr #[jFormInt, jFormBool])]),
+     ("args", Json.arr args)]
+
+-- A lookup decodes at the option of the map's value code, and the key code comes
+-- off the map argument's own type field.
+#guard (match decodeTerm bareTables (.option .bool)
+            (jFormMapLookupAt jFormBoolOption
+              #[jFormEmptyMap, jFormIntLit "3"]) with
+        | .ok (.mapFind _ k) => isIntLit k 3
+        | _ => false)
+
+-- An argument that is no finite map is rejected.
+#guard (match decodeTerm bareTables (.option .bool)
+            (jFormMapLookupAt jFormBoolOption
+              #[jFormIntLit "0", jFormIntLit "3"]) with
+        | .error m => m.startsWith "ec-import: 'Top.FMap._.[_]' is applied to"
+        | _ => false)
+
+-- A context expecting an option of another code is rejected: the map's value
+-- code and the option's are the same code.
+#guard (match decodeTerm bareTables (.option .int)
+            (jFormMapLookupAt jFormIntOption
+              #[jFormEmptyMap, jFormIntLit "3"]) with
+        | .error m => m.startsWith "ec-import: 'Top.FMap._.[_]' reads a map of"
+        | _ => false)
+
+/-- `m.[k <- v]` at the `(int, bool) fmap` type node, over the arguments
+`args`. -/
+private def jFormMapSetAt (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", jFormIntBoolMap), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntBoolMap),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormInt),
+              ("cod", Json.mkObj
+                [("kind", Json.str "Tfun"), ("dom", jFormBool),
+                 ("cod", jFormIntBoolMap)])])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.FMap._.[_<-_]"),
+        ("targs", Json.arr #[jFormInt, jFormBool])]),
+     ("args", Json.arr args)]
+
+-- An update returns a map, so the result code fixes both the key and the value
+-- code and no type field has to be read.
+#guard (match decodeTerm bareTables (.map .int .bool)
+            (jFormMapSetAt
+              #[jFormEmptyMap, jFormIntLit "3",
+                jFormNullary jFormBool "Top.Pervasive.true"]) with
+        | .ok (.mapSet m k v) =>
+            m.litValue == some ([] : (EcTy.map .int .bool).interp)
+              && isIntLit k 3 && isBoolLit v true
+        | _ => false)
+
+-- An update applied to two arguments is rejected, rather than read as the
+-- partial application.
+#guard (match decodeTerm bareTables (.map .int .bool)
+            (jFormMapSetAt #[jFormEmptyMap, jFormIntLit "3"]) with
+        | .error m =>
+          m.startsWith "ec-import: 'Top.FMap._.[_<-_]' applied to 2 arguments"
+        | _ => false)
+
+/-! ### `dom` and `m.[k]` at the spellings the operator table does not carry -/
+
+/-- `dom` at the result node `res`, over the arguments `args`, at the spelling
+`FMap.ec`'s own statements write it under. -/
+private def jFormBareDomAt (res : Json) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntBoolMap),
+           ("cod", jFormIntPred)]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.dom"),
+        ("targs", Json.arr #[jFormInt, jFormBool])]),
+     ("args", Json.arr args)]
+
+-- `dom m k` is the membership test, and the key code comes off the map
+-- argument's own type field.
+#guard (match decodeTerm bareTables .bool
+            (jFormBareDomAt jFormBool #[jFormEmptyMap, jFormIntLit "3"]) with
+        | .ok (.mapMem _ k) => isIntLit k 3
+        | _ => false)
+
+-- `dom m` read at one argument is the predicate its definition gives, as a
+-- lambda over the key.
+#guard (match decodeTerm bareTables (.arrow .int .bool)
+            (jFormBareDomAt jFormIntPred #[jFormEmptyMap]) with
+        | .ok (.lam .int x (.mapMem _ (.var .int y))) => x == y
+        | _ => false)
+
+-- An argument that is no finite map is rejected.
+#guard (match decodeTerm bareTables .bool
+            (jFormBareDomAt jFormBool #[jFormIntLit "0", jFormIntLit "3"]) with
+        | .error m => m.startsWith "ec-import: 'Top.dom' is applied to"
+        | _ => false)
+
+-- At a code that is neither a boolean nor a predicate the read is rejected.
+#guard (match decodeTerm bareTables .int
+            (jFormBareDomAt jFormInt #[jFormEmptyMap, jFormIntLit "3"]) with
+        | .error m => m.startsWith "ec-import: 'Top.dom' at type"
+        | _ => false)
+
+/-- `m.[k]` at the result node `res`, over the arguments `args`, at the spelling
+`FMap.ec`'s own statements write it under. -/
+private def jFormBareLookupAt (res : Json) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntBoolMap),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormInt), ("cod", res)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top._.[_]"),
+        ("targs", Json.arr #[jFormInt, jFormBool])]),
+     ("args", Json.arr args)]
+
+-- The bare spelling reads the same lookup the qualified one does.
+#guard (match decodeTerm bareTables (.option .bool)
+            (jFormBareLookupAt jFormBoolOption
+              #[jFormEmptyMap, jFormIntLit "3"]) with
+        | .ok (.mapFind _ k) => isIntLit k 3
+        | _ => false)
+
+-- A context expecting an option of another code is rejected: the map's value
+-- code and the option's are the same code.
+#guard (match decodeTerm bareTables (.option .int)
+            (jFormBareLookupAt jFormIntOption
+              #[jFormEmptyMap, jFormIntLit "3"]) with
+        | .error m => m.startsWith "ec-import: 'Top._.[_]' reads a map of"
+        | _ => false)
+
+/-! ### List catenation and the two distribution operators -/
+
+/-- `s1 ++ s2` at the result node `res`, over the arguments `args`. -/
+private def jFormCatAt (res : Json) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntList),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormIntList), ("cod", res)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.++"),
+        ("targs", Json.arr #[jFormInt])]),
+     ("args", Json.arr args)]
+
+/-- The empty list at the `int list` type node. -/
+private def jFormEmptyList : Json := jFormNullary jFormIntList "Top.List.[]"
+
+-- Catenation decodes at the list code the result fixes, which is the code both
+-- arguments are read at.
+#guard (match decodeTerm bareTables (.list .int)
+            (jFormCatAt jFormIntList #[jFormEmptyList, jFormEmptyList]) with
+        | .ok (.listCat (a := .int) (.lit u) (.lit v)) =>
+            u == EcTy.listEmpty (a := .int) && v == EcTy.listEmpty (a := .int)
+        | _ => false)
+
+-- At a code that is no list the application is rejected.
+#guard (match decodeTerm bareTables .int
+            (jFormCatAt jFormInt #[jFormEmptyList, jFormEmptyList]) with
+        | .error m => m.startsWith "ec-import: 'Top.++' at type"
+        | _ => false)
+
+/-- The `(int * int) distr` type node. -/
+private def jFormIntPairDistr : Json :=
+  Json.mkObj [("kind", Json.str "Tconstr"),
+              ("path", Json.str "Top.Distr.distr"),
+              ("args", Json.arr #[jFormIntPair])]
+
+/-- ``d1 `*` d2`` at the result node `res`, over the arguments `args`. -/
+private def jFormDprodAt (res : Json) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntDistr),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormIntDistr), ("cod", res)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Distr.`*`"),
+        ("targs", Json.arr #[jFormInt, jFormInt])]),
+     ("args", Json.arr args)]
+
+/-- The canonical inhabitant at the `int distr` type node. -/
+private def jFormWitnessDistr : Json :=
+  jFormNullary jFormIntDistr "Top.Pervasive.witness"
+
+-- The product decodes at a distribution over pairs, and each factor at the
+-- component the pair's code gives.
+#guard (match decodeTerm bareTables (.distr (.prod .int .int))
+            (jFormDprodAt jFormIntPairDistr
+              #[jFormWitnessDistr, jFormWitnessDistr]) with
+        | .ok (.distrProd (a := .int) (b := .int) (.lit _) (.lit _)) => true
+        | _ => false)
+
+-- At a distribution over a code that is no pair the application is rejected.
+#guard (match decodeTerm bareTables (.distr .int)
+            (jFormDprodAt jFormIntDistr
+              #[jFormWitnessDistr, jFormWitnessDistr]) with
+        | .error m => m.startsWith "ec-import: 'Top.Distr.`*`' at type"
+        | _ => false)
+
+/-- `d \ p` at the result node `res`, over the arguments `args`. -/
+private def jFormDexceptedAt (res : Json) (args : Array Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jFormIntDistr),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jFormIntPred), ("cod", res)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Dexcepted.\\"),
+        ("targs", Json.arr #[jFormInt])]),
+     ("args", Json.arr args)]
+
+-- The conditioned distribution decodes at the code of the distribution it
+-- conditions, and the predicate at the arrow from that code into `bool`.
+#guard (match decodeTerm bareTables (.distr .int)
+            (jFormDexceptedAt jFormIntDistr
+              #[jFormWitnessDistr,
+                jFormNullary jFormIntPred "Top.Logic.predT"]) with
+        | .ok (.distrExcept (a := .int) (.lit _) (.lam .int _ (.lit v))) =>
+            v == true
+        | _ => false)
+
+-- At a code that is no distribution the application is rejected.
+#guard (match decodeTerm bareTables .int
+            (jFormDexceptedAt jFormInt
+              #[jFormWitnessDistr,
+                jFormNullary jFormIntPred "Top.Logic.predT"]) with
+        | .error m => m.startsWith "ec-import: 'Top.Dexcepted.\\' at type"
+        | _ => false)
+
+/-! ### A quantifier in term position
+
+EasyCrypt's propositions are values of `bool`, so `forall` and `exists` stand
+wherever a boolean term does. The binder is carried by the term and the body
+reads it, which is what a reading that dropped the binder or fixed a witness
+would lose. -/
+
+/-- A binder over the values of the type node `ty`, named `nm` at `st`. -/
+private def jFormTyBinder (nm : String) (st : Nat) (ty : Json) : Json :=
+  Json.mkObj
+    [("name", Json.str nm), ("stamp", Json.num st),
+     ("gty", Json.mkObj [("kind", Json.str "GTty"), ("ty", ty)])]
+
+/-- A quantifier `q` over the binders `bs` with the body `body`, at the type
+node `ty`. -/
+private def jFormQuantAt (ty : Json) (q : String) (bs : Array Json)
+    (body : Json) : Json :=
+  Json.mkObj
+    [("ty", ty), ("kind", Json.str "Fquant"), ("quant", Json.str q),
+     ("binders", Json.arr bs), ("body", body)]
+
+/-- The comparison `x <= 0` on the logical variable `x` at the stamp `st`. -/
+private def jFormLeZero (st : Nat) : Json :=
+  jFormIntApp jFormBool "Top.CoreInt.le"
+    #[Json.mkObj [("ty", jFormInt), ("kind", Json.str "Flocal"),
+                  ("name", Json.str "x"), ("stamp", Json.num st)],
+      jFormIntLit "0"]
+
+-- A universally quantified proposition in term position carries its binder, and
+-- the body reads it as a logical variable of the same name.
+#guard (match decodeTerm bareTables .bool
+            (jFormQuantAt jFormBool "Lforall"
+              #[jFormTyBinder "x" 93 jFormInt] (jFormLeZero 93)) with
+        | .ok (.forallB .int x (.intLe (.var .int y) _)) => x == "x" && x == y
+        | _ => false)
+
+-- An existential decodes at the same code, under its own former.
+#guard (match decodeTerm bareTables .bool
+            (jFormQuantAt jFormBool "Lexists"
+              #[jFormTyBinder "x" 93 jFormInt] (jFormLeZero 93)) with
+        | .ok (.existsB .int x (.intLe (.var .int y) _)) => x == "x" && x == y
+        | _ => false)
+
+-- Several binders nest, the first binder outermost.
+#guard (match decodeTerm bareTables .bool
+            (jFormQuantAt jFormBool "Lforall"
+              #[jFormTyBinder "y" 94 jFormBool,
+                jFormTyBinder "x" 93 jFormInt] (jFormLeZero 93)) with
+        | .ok (.forallB .bool "y" (.forallB .int "x" _)) => true
+        | _ => false)
+
+-- At a code that is no boolean the quantifier is rejected: an EasyCrypt
+-- quantifier is a proposition.
+#guard (match decodeTerm bareTables .int
+            (jFormQuantAt jFormInt "Lforall"
+              #[jFormTyBinder "x" 93 jFormInt] (jFormLeZero 93)) with
+        | .error m => m.startsWith "ec-import: a quantified term in"
+        | _ => false)
+
+-- A binder that is no value of a type code is rejected, rather than dropped.
+#guard (match decodeTerm bareTables .bool
+            (jFormQuantAt jFormBool "Lforall"
+              #[Json.mkObj
+                  [("name", Json.str "m"), ("stamp", Json.num 95),
+                   ("gty", Json.mkObj [("kind", Json.str "GTmem")])]]
+              (jFormLeZero 93)) with
+        | .error m => m.startsWith "ec-import: the binder 'm' of sort 'GTmem'"
         | _ => false)
 
 -- A node the exporter marked as outside its coverage is rejected.
@@ -3748,6 +5221,93 @@ private def dKSig : EcSig := ⟨.unit, .distr (.opaque "Top.PseudoRF.K")⟩
 #guard (match decodeAxiom (formTables (registerThTypes ecPrelude [jPRFDecls]) [])
             jPRFDKLL with
         | .error m => m.startsWith "ec-import: unknown nullary operator path"
+        | _ => false)
+
+/-- The read of `dK` at its declared type node. -/
+private def jPRFDKRead : Json :=
+  Json.mkObj [("ty", jPRFDistrK), ("kind", Json.str "Fop"),
+              ("path", Json.str "Top.PseudoRF.dK"), ("targs", Json.arr #[])]
+
+/-- `support d x` at the result type node `res`, over the distribution node `d`
+and the element node `x`. -/
+private def jPRFSupportAt (res d x : Json) : Json :=
+  Json.mkObj
+    [("ty", res), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jPRFDistrK),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jPRFK), ("cod", jFormBool)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.support"),
+        ("targs", Json.arr #[jPRFK])]),
+     ("args", Json.arr #[d, x])]
+
+-- `support` reads the element code off its distribution argument, so the read
+-- of `dK` carries the signature its declaration gives it.
+#guard (match decodeTerm prfFormTables .bool
+            (jPRFSupportAt jFormBool jPRFDKRead
+              (jFormNullary jPRFK "Top.Pervasive.witness")) with
+        | .ok (.support d _) => d.opAppOf == some ("Top.PseudoRF.dK", dKSig)
+        | _ => false)
+
+-- An argument that is no distribution is rejected.
+#guard (match decodeTerm prfFormTables .bool
+            (jPRFSupportAt jFormBool (jFormNullary jPRFK "Top.Pervasive.witness")
+              (jFormNullary jPRFK "Top.Pervasive.witness")) with
+        | .error m => m.startsWith "ec-import: 'Top.support' is applied to"
+        | _ => false)
+
+-- At a code that is not `bool` the application is rejected: membership in a
+-- distribution's support is a boolean.
+#guard (match decodeTerm prfFormTables .int
+            (jPRFSupportAt jFormInt jPRFDKRead
+              (jFormNullary jPRFK "Top.Pervasive.witness")) with
+        | .error m => m.startsWith "ec-import: 'Top.support' at type"
+        | _ => false)
+
+/-- The type node of `K -> bool`, the code a predicate over `K` reads at. -/
+private def jPRFPredK : Json :=
+  Json.mkObj [("kind", Json.str "Tfun"), ("dom", jPRFK), ("cod", jFormBool)]
+
+/-- `pred1 witness`, a predicate over `K`. -/
+private def jPRFPred1Witness : Json :=
+  Json.mkObj
+    [("ty", jPRFPredK), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jPRFK), ("cod", jPRFPredK)]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Logic.pred1"),
+        ("targs", Json.arr #[jPRFK])]),
+     ("args", Json.arr #[jFormNullary jPRFK "Top.Pervasive.witness"])]
+
+/-- `mu d P` at the `real` result node, over the distribution node `d` and the
+predicate node `P`. -/
+private def jPRFMuAt (d P : Json) : Json :=
+  Json.mkObj
+    [("ty", jFormReal), ("kind", Json.str "Fapp"),
+     ("f", Json.mkObj
+       [("ty", Json.mkObj
+          [("kind", Json.str "Tfun"), ("dom", jPRFDistrK),
+           ("cod", Json.mkObj
+             [("kind", Json.str "Tfun"), ("dom", jPRFPredK),
+              ("cod", jFormReal)])]),
+        ("kind", Json.str "Fop"), ("path", Json.str "Top.Pervasive.mu"),
+        ("targs", Json.arr #[jPRFK])]),
+     ("args", Json.arr #[d, P])]
+
+-- `mu` reads the element code off its distribution argument, so the read of `dK`
+-- carries the signature its declaration gives it, and the predicate decodes at
+-- the arrow code that element gives.
+#guard (match decodeProb prfFormTables (jPRFMuAt jPRFDKRead jPRFPred1Witness) with
+        | .ok (.mu d (.lam _ _ (.beq _ _))) =>
+            d.opAppOf == some ("Top.PseudoRF.dK", dKSig)
+        | _ => false)
+
+-- An argument that is no distribution is rejected.
+#guard (match decodeProb prfFormTables
+            (jPRFMuAt (jFormNullary jPRFK "Top.Pervasive.witness")
+              jPRFPred1Witness) with
+        | .error m => m.startsWith "ec-import: 'Top.Pervasive.mu' is applied to"
         | _ => false)
 
 /-! ### An applied abstract operator
@@ -4537,6 +6097,35 @@ private def maxTables : FormTables :=
 -- The expanded statement reads no abstract operator.
 #guard (match decodeAxiom maxTables jLezMaxrItem with
         | .ok f => EcForm.opsOf f == []
+        | _ => false)
+
+-- A definition read with no argument is one lambda per parameter over the body,
+-- with each parameter bound to the lambda's own variable.
+#guard (match decodeTerm maxTables (.arrow .int (.arrow .int .int))
+            (jMaxOpNode (jMaxFun2 jMaxIntTy jMaxIntTy jMaxIntTy) "Top.max" #[]) with
+        | .ok (.lam .int _ (.lam .int _
+                 (.letIn _ _ (.letIn _ _ (.ite (.bnot (.intLe _ _)) _ _))))) => true
+        | _ => false)
+
+-- The lambda binders carry a `#`, which no source identifier holds.
+#guard (match decodeTerm maxTables (.arrow .int (.arrow .int .int))
+            (jMaxOpNode (jMaxFun2 jMaxIntTy jMaxIntTy jMaxIntTy) "Top.max" #[]) with
+        | .ok (.lam _ n₁ (.lam _ n₂ _)) => n₁ == "Top.max#1" && n₂ == "Top.max#2"
+        | _ => false)
+
+-- A read at a code with fewer arrows than the definition has parameters is
+-- rejected, rather than read at the body.
+#guard (match decodeTerm maxTables .int (jMaxOpNode jMaxIntTy "Top.max" #[]) with
+        | .error m =>
+          m.startsWith "ec-import: the operator 'Top.max' is defined with 2"
+        | _ => false)
+
+-- A read at an arrow code whose domain is not the parameter's declared code is
+-- rejected.
+#guard (match decodeTerm maxTables (.arrow .bool (.arrow .int .int))
+            (jMaxOpNode (jMaxFun2 jXorBoolTy jMaxIntTy jMaxIntTy) "Top.max" #[]) with
+        | .error m =>
+          m.startsWith "ec-import: the operator 'Top.max' is defined at parameter"
         | _ => false)
 
 /-- `Top.^^`'s tables with boolean negation removed, at which its definition's

@@ -181,7 +181,7 @@ private def isBoolLitExpr {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
 
 /-- The lowered module: two `SPComp` procedures sharing the location `Otp.k`. -/
 noncomputable def otpImpl : ModuleImpl otpInterface :=
-  lowerModule ProcEnv.empty 0 otpModule
+  lowerModule ProcEnv.empty OpEnv.empty 0 otpModule
 
 theorem otpImpl_gen :
     otpImpl.proc "gen" ()
@@ -190,7 +190,7 @@ theorem otpImpl_gen :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.sample .bool "kk", EcStmt.store kGlobal (EcExpr.var .bool "kk")]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.var .bool "kk") env)) = _
   simp only [lowerStmts_sample, lowerStmts_store_finLoc (g := kGlobal) (hfin := rfl),
     lowerStmts_nil, sampleFin_bool, SPComp.bind_assoc, SPComp.pure_bind, evalExpr,
@@ -203,7 +203,7 @@ theorem otpImpl_wipe :
   show SPComp.bind
       (lowerStmts ProcEnv.empty [] 0
         [EcStmt.store kGlobal (EcExpr.lit (t := .bool) false)]
-        (emptyEnv.update anonymousLocal ⟨EcTy.unit, ()⟩))
+        ((emptyEnv OpEnv.empty).update anonymousLocal ⟨EcTy.unit, ()⟩))
       (fun env => SPComp.pure (evalExpr (EcExpr.lit (t := .bool) false) env)) = _
   simp only [lowerStmts_store_finLoc (g := kGlobal) (hfin := rfl), lowerStmts_nil,
     SPComp.bind_assoc, SPComp.pure_bind, evalExpr]
@@ -264,14 +264,14 @@ noncomputable def expEnv (A : ModuleImpl advInterface) : ProcEnv :=
 
 /-- The experiment as a family indexed by the adversary module. -/
 noncomputable def expImpl (A : ModuleImpl advInterface) (m : Bool) : SPComp Bool :=
-  lowerGame (expEnv A) (expGame m) 0
+  lowerGame (expEnv A) OpEnv.empty (expGame m) 0
 
 /-- The two functor images the statements name, keyed by the module binder they
 are applied to. -/
 noncomputable def expImages : String → ProcEnv → ProcEnv := fun name ρ =>
   if name = "A" then
-    (ρ.bindProc "Top.Exp0(A)./main" (s := mainSig) (fun _ => lowerGame ρ (expGame false) 0)).bindProc
-      "Top.Exp1(A)./main" (s := mainSig) (fun _ => lowerGame ρ (expGame true) 0)
+    (ρ.bindProc "Top.Exp0(A)./main" (s := mainSig) (fun _ => lowerGame ρ OpEnv.empty (expGame false) 0)).bindProc
+      "Top.Exp1(A)./main" (s := mainSig) (fun _ => lowerGame ρ OpEnv.empty (expGame true) 0)
   else ρ
 
 /-! ## Call resolution -/

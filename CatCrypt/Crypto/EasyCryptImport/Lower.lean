@@ -4,7 +4,9 @@ Released under MIT license as described in the file LICENSE.
 Authors: CatCrypt Contributors
 -/
 import CatCrypt.Crypto.EasyCryptImport.Modules
+import CatCrypt.Crypto.EasyCryptImport.Params
 import CatCrypt.NonUniform.Conditional
+import CatCrypt.NonUniform.WhileState
 import CatCrypt.NonUniform.Product
 
 /-!
@@ -89,29 +91,48 @@ open CatCrypt.Core
 
 /-! ## Local valuations -/
 
-/-- A local-variable valuation: a dynamically typed value per variable identity.
-The key is an `EcVarId` — a source name together with the uniqueness stamp of a
-bound identifier — so a program variable and a distribution operator's lambda
-binder of one source name occupy different entries, and a binder cannot capture an
-occurrence of another identifier of its name. -/
-abbrev Env := EcVarId → EcVal
+/-- The environment a program is evaluated in: a valuation of the local
+variables, and a realization of the abstract operators the program reads.
 
-/-- The initial valuation: every variable holds the unit value until assigned. -/
-def emptyEnv : Env := fun _ => EcVal.nil
+The valuation holds a dynamically typed value per variable identity. The key is
+an `EcVarId` — a source name together with the uniqueness stamp of a bound
+identifier — so a program variable and a distribution operator's lambda binder of
+one source name occupy different entries, and a binder cannot capture an
+occurrence of another identifier of its name.
 
-/-- Rebind variable `x`, leaving all other variables unchanged. -/
+The realization answers an `EcExpr.opApp`. It sits in the environment rather than
+beside it so that a program and a statement about that program are read at one
+realization: `FormToProp.evalTerm` builds the environment its embedded
+expressions are evaluated in, and that environment carries the statement's own
+operator binder. No statement writes the field — `lowerStmts` threads it
+unchanged, and only the valuation varies along a program. -/
+structure Env where
+  /-- The value each local variable holds. -/
+  locals : EcVarId → EcVal
+  /-- The realization of the abstract operator declarations the program reads. -/
+  ops : OpEnv
+
+/-- The initial environment at a realization: every variable holds the unit value
+until assigned. -/
+def emptyEnv (ω : OpEnv) : Env := { locals := fun _ => EcVal.nil, ops := ω }
+
+/-- Rebind variable `x`, leaving all other variables and the realization
+unchanged. -/
 def Env.update (env : Env) (x : EcVarId) (v : EcVal) : Env :=
-  fun y => if y = x then v else env y
+  { env with locals := fun y => if y = x then v else env.locals y }
 
 /-- Read variable `x` at the type code `t`; a variable holding a value of a
 different type reads as `default`. -/
-def Env.read (env : Env) (t : EcTy) (x : EcVarId) : t.interp := (env x).get t
+def Env.read (env : Env) (t : EcTy) (x : EcVarId) : t.interp := (env.locals x).get t
+
+@[simp] theorem Env.update_ops (env : Env) (x : EcVarId) (v : EcVal) :
+    (env.update x v).ops = env.ops := rfl
 
 @[simp] theorem Env.update_same (env : Env) (x : EcVarId) (v : EcVal) :
-    env.update x v x = v := if_pos rfl
+    (env.update x v).locals x = v := if_pos rfl
 
 theorem Env.update_ne (env : Env) (x y : EcVarId) (v : EcVal) (h : y ≠ x) :
-    env.update x v y = env y := if_neg h
+    (env.update x v).locals y = env.locals y := if_neg h
 
 @[simp] theorem Env.read_update_same (env : Env) (t : EcTy) (x : EcVarId) (v : t.interp) :
     (env.update x ⟨t, v⟩).read t x = v := by
@@ -183,9 +204,14 @@ empty set for `fsetUnion`. Those answers are not the operations' meanings —
 they are what a total computable function returns where the operation has no
 meaning — so a hand-written literal at such a code states nothing about the
 operation. -/
-def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
+noncomputable def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
   | _, .var t x,   env => env.read t x
   | _, .lit v,     _   => v
+  | _, .opApp p s a, env => env.ops p s (evalExpr a env)
+  | _, .app f x, env => (evalExpr f env) (evalExpr x env)
+  | _, .lam a x body, env => fun v => evalExpr body (env.update x ⟨a, v⟩)
+  | _, .listMap (a := a) (b := b) f l, env =>
+      EcTy.listMap (a := a) (b := b) (evalExpr f env) (evalExpr l env)
   | _, .bnot e,    env => !(evalExpr e env)
   | _, .band a b,  env => (evalExpr a env) && (evalExpr b env)
   | _, .bxor a b,  env => xor (evalExpr a env) (evalExpr b env)
@@ -214,6 +240,10 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
       decide ((show Int from evalExpr a env) ≤ (show Int from evalExpr b env))
   | _, .mapSet (a := a) (b := b) m k v, env =>
       EcTy.mapSet (a := a) (b := b) (evalExpr m env) (evalExpr k env) (evalExpr v env)
+  | _, .mapRem (a := a) (b := b) m k, env =>
+      if h : a.hasEq = true then
+        EcTy.mapRem (a := a) (b := b) (evalExpr m env) (evalExpr k env) h
+      else evalExpr m env
   | _, .mapMem (a := a) (b := b) m k, env =>
       if h : a.hasEq = true then
         EcTy.mapMem (a := a) (b := b) (evalExpr m env) (evalExpr k env) h
@@ -223,6 +253,16 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
         EcTy.mapGetD (a := a) (b := b) (evalExpr m env) (evalExpr k env)
           (evalExpr d env) h
       else evalExpr d env
+  | _, .mapFdom (a := a) (b := b) m, env =>
+      if h : a.hasEq = true then
+        EcTy.mapFdom (a := a) (b := b) (evalExpr m env) h
+      else EcTy.defaultOf (.fset a)
+  | _, .mapRng (a := a) (b := b) m y, env =>
+      if h : a.hasEq = true then
+        if h' : b.hasEq = true then
+          EcTy.mapRng (a := a) (b := b) (evalExpr m env) (evalExpr y env) h h'
+        else false
+      else false
   | _, .ite c thn els, env =>
       if evalExpr c env then evalExpr thn env else evalExpr els env
   | _, .someE (a := a) x, env => EcTy.someVal (a := a) (evalExpr x env)
@@ -237,8 +277,35 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
       if h : a.hasEq = true then
         EcTy.listMem (a := a) (evalExpr l env) (evalExpr x env) h
       else false
+  | _, .listSet (a := a) l i x, env =>
+      EcTy.listSet (a := a) (evalExpr l env) (evalExpr i env) (evalExpr x env)
+  | _, .listTake (a := a) l n, env =>
+      EcTy.listTake (a := a) (evalExpr l env) (evalExpr n env)
+  | _, .fsetElems (a := a) s, env => EcTy.fsetElems (a := a) (evalExpr s env)
+  | _, .listCat (a := a) l₁ l₂, env =>
+      EcTy.listCat (a := a) (evalExpr l₁ env) (evalExpr l₂ env)
+  | _, .listZip (a := a) (b := b) l₁ l₂, env =>
+      EcTy.listZip (a := a) (b := b) (evalExpr l₁ env) (evalExpr l₂ env)
+  | _, .listUniq (a := a) l, env =>
+      if h : a.hasEq = true then EcTy.listUniq (a := a) (evalExpr l env) h
+      else false
+  | _, .listHas (a := a) p l, env =>
+      EcTy.listHas (a := a) (evalExpr p env) (evalExpr l env)
+  | _, .forallB a x body, env =>
+      letI := Classical.propDecidable
+        (∀ v : a.interp, (show Bool from evalExpr body (env.update x ⟨a, v⟩)) = true)
+      decide
+        (∀ v : a.interp, (show Bool from evalExpr body (env.update x ⟨a, v⟩)) = true)
+  | _, .existsB a x body, env =>
+      letI := Classical.propDecidable
+        (∃ v : a.interp, (show Bool from evalExpr body (env.update x ⟨a, v⟩)) = true)
+      decide
+        (∃ v : a.interp, (show Bool from evalExpr body (env.update x ⟨a, v⟩)) = true)
+  | _, .listFlatten (a := a) l, env => EcTy.listFlatten (a := a) (evalExpr l env)
   | _, .listNth (a := a) d l i, env =>
       EcTy.listNth (a := a) (evalExpr d env) (evalExpr l env) (evalExpr i env)
+  | _, .listHead (a := a) z l, env =>
+      EcTy.listHead (a := a) (evalExpr z env) (evalExpr l env)
   | _, .fsetSingle (a := a) x, env => EcTy.fsetSingle (a := a) (evalExpr x env)
   | _, .fsetUnion (a := a) s t, env =>
       if h : a.hasEq = true then
@@ -248,10 +315,15 @@ def evalExpr : {t : EcTy} → EcExpr t → Env → t.interp
       if h : a.hasEq = true then
         EcTy.fsetMem (a := a) (evalExpr s env) (evalExpr x env) h
       else false
+  | _, .fsetCard (a := a) s, env => EcTy.fsetCard (a := a) (evalExpr s env)
+  | _, .fsetSubset (a := a) s t, env =>
+      if h : a.hasEq = true then
+        EcTy.fsetSubset (a := a) (evalExpr s env) (evalExpr t env) h
+      else false
 
 /-- Evaluate a boolean-typed expression to a `Bool`, the form a Lean-level `if`
 branches on. -/
-def evalCond (c : EcExpr .bool) (env : Env) : Bool := evalExpr c env
+noncomputable def evalCond (c : EcExpr .bool) (env : Env) : Bool := evalExpr c env
 
 @[simp] theorem evalCond_eq (c : EcExpr .bool) (env : Env) :
     evalCond c env = evalExpr c env := rfl
@@ -304,6 +376,8 @@ noncomputable def evalDistr : {t : EcTy} → EcDistr t → Env → CatCrypt.Prob
   | _, .letD (a := a) d x body, env =>
       (evalDistr d env).bind fun v => evalDistr body (env.update x ⟨a, v⟩)
   | _, .prod d₁ d₂, env => NonUniform.prod (evalDistr d₁ env) (evalDistr d₂ env)
+  | _, .dlist (a := a) d n, env =>
+      EcTy.distrList (a := a) (evalDistr d env) (evalExpr n env)
   | _, .scale d, env => NonUniform.scale (evalDistr d env)
   | _, .restrict (t := t) d x p, env =>
       NonUniform.restrict (evalDistr d env)
@@ -425,6 +499,16 @@ noncomputable def lowerStmts (ρ : ProcEnv) (procs : List (String × List EcStmt
   | fuel, .forN n body :: rest, env =>
       SPComp.bind
         (SPComp.foldM env (List.replicate n (fun e => lowerStmts ρ procs fuel body e)))
+        (fun env' => lowerStmts ρ procs fuel rest env')
+  | fuel, .whileS c body :: rest, env =>
+      -- The valuation is the loop's threaded state: the guard reads it and the
+      -- body rewrites it, so neither is a function of the heap alone. The loop is
+      -- the limit of its bounded approximants, and a run that never leaves it
+      -- carries failure mass rather than an outcome, which is partial
+      -- correctness — the reading `pHoare_whileLoop` is stated against.
+      SPComp.bind
+        (NonUniform.whileLoopS (fun e _ => evalCond c e)
+          (fun e => lowerStmts ρ procs fuel body e) env)
         (fun env' => lowerStmts ρ procs fuel rest env')
   | fuel, .callProc q s arg x :: rest, env =>
       SPComp.bind (ρ q s (evalExpr arg env))
@@ -579,66 +663,66 @@ theorem lowerStmts_call_zero (ρ : ProcEnv) (procs : List (String × List EcStmt
 an `SPComp` computation of the result: bind each formal parameter to its
 component of the argument, run the body, and evaluate the return expression on
 the final valuation. -/
-noncomputable def lowerProcAt (ρ : ProcEnv) (fuel : Nat) {s : EcSig} (pr : EcProcAt s) :
+noncomputable def lowerProcAt (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) {s : EcSig} (pr : EcProcAt s) :
     s.arg.interp → SPComp s.res.interp :=
   fun a =>
     SPComp.bind
-      (lowerStmts ρ [] fuel pr.body (bindParams s.arg pr.params a emptyEnv))
+      (lowerStmts ρ [] fuel pr.body (bindParams s.arg pr.params a (emptyEnv ω)))
       (fun env => SPComp.pure (evalExpr pr.ret env))
 
 /-- Lower a concrete module to a record of `SPComp` procedures over its
 interface. The module's globals are shared through the heap: each procedure body
 reads and writes the cells of the module's `EcGlobal`s. -/
-noncomputable def lowerModule (ρ : ProcEnv) (fuel : Nat) (M : EcModule) :
+noncomputable def lowerModule (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (M : EcModule) :
     ModuleImpl M.interface where
-  proc := fun p => lowerProcAt ρ fuel (M.procs p)
+  proc := fun p => lowerProcAt ρ ω fuel (M.procs p)
 
-@[simp] theorem lowerModule_proc (ρ : ProcEnv) (fuel : Nat) (M : EcModule) (p : String) :
-    (lowerModule ρ fuel M).proc p = lowerProcAt ρ fuel (M.procs p) := rfl
+@[simp] theorem lowerModule_proc (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (M : EcModule) (p : String) :
+    (lowerModule ρ ω fuel M).proc p = lowerProcAt ρ ω fuel (M.procs p) := rfl
 
 /-- Lower a functor to a Lean function on module records: the parameter module
 is bound in the resolution environment under the functor's parameter prefix, and
 the functor body is lowered against that environment. Functor application is
 function application. -/
-noncomputable def lowerFunctor (ρ : ProcEnv) (fuel : Nat) (F : EcFunctor)
+noncomputable def lowerFunctor (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (F : EcFunctor)
     (X : ModuleImpl F.paramInterface) : ModuleImpl F.body.interface :=
-  lowerModule (ρ.bindModule F.paramName X) fuel F.body
+  lowerModule (ρ.bindModule F.paramName X) ω fuel F.body
 
-@[simp] theorem lowerFunctor_proc (ρ : ProcEnv) (fuel : Nat) (F : EcFunctor)
+@[simp] theorem lowerFunctor_proc (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (F : EcFunctor)
     (X : ModuleImpl F.paramInterface) (p : String) :
-    (lowerFunctor ρ fuel F X).proc p
-      = lowerProcAt (ρ.bindModule F.paramName X) fuel (F.body.procs p) := rfl
+    (lowerFunctor ρ ω fuel F X).proc p
+      = lowerProcAt (ρ.bindModule F.paramName X) ω fuel (F.body.procs p) := rfl
 
 /-- Lower a functor whose body calls its parameter by the cross-paths the
 exporter writes, which is the shape a decoded functor has. `lowerFunctor` is the
 same lowering for a body that calls the parameter by `qualify`. -/
-noncomputable def lowerFunctorX (ρ : ProcEnv) (fuel : Nat) (F : EcFunctor)
+noncomputable def lowerFunctorX (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (F : EcFunctor)
     (X : ModuleImpl F.paramInterface) : ModuleImpl F.body.interface :=
-  lowerModule (ρ.bindModuleX F.paramName X) fuel F.body
+  lowerModule (ρ.bindModuleX F.paramName X) ω fuel F.body
 
-@[simp] theorem lowerFunctorX_proc (ρ : ProcEnv) (fuel : Nat) (F : EcFunctor)
+@[simp] theorem lowerFunctorX_proc (ρ : ProcEnv) (ω : OpEnv) (fuel : Nat) (F : EcFunctor)
     (X : ModuleImpl F.paramInterface) (p : String) :
-    (lowerFunctorX ρ fuel F X).proc p
-      = lowerProcAt (ρ.bindModuleX F.paramName X) fuel (F.body.procs p) := rfl
+    (lowerFunctorX ρ ω fuel F X).proc p
+      = lowerProcAt (ρ.bindModuleX F.paramName X) ω fuel (F.body.procs p) := rfl
 
 /-- Lower a game to `SPComp Bool`: run the body from the initial valuation under
 the resolution environment `ρ`, the game's argument-free procedure table and the
 call-depth bound `fuel`, then return the game's result bit. -/
-noncomputable def lowerGame (ρ : ProcEnv) (g : EcGame) (fuel : Nat := 0) : SPComp Bool :=
-  SPComp.bind (lowerStmts ρ g.procs fuel g.body emptyEnv)
+noncomputable def lowerGame (ρ : ProcEnv) (ω : OpEnv) (g : EcGame) (fuel : Nat := 0) : SPComp Bool :=
+  SPComp.bind (lowerStmts ρ g.procs fuel g.body (emptyEnv ω))
     (fun env => SPComp.pure (evalExpr g.ret env))
 
 /-- Lower a game that calls no external module. -/
-noncomputable def lowerClosedGame (g : EcGame) (fuel : Nat := 0) : SPComp Bool :=
-  lowerGame ProcEnv.empty g fuel
+noncomputable def lowerClosedGame (ω : OpEnv) (g : EcGame) (fuel : Nat := 0) : SPComp Bool :=
+  lowerGame ProcEnv.empty ω g fuel
 
 /-- Lower a game parameterised by an abstract module bound at `advName`: the
 result is a family of games indexed by the module parameter, which is the shape
 an imported EasyCrypt experiment `Exp(A)` takes — a statement about it
 quantifies over `A : ModuleImpl I`. -/
-noncomputable def lowerGameWith (ρ : ProcEnv) (advName : String) {I : EcInterface}
+noncomputable def lowerGameWith (ρ : ProcEnv) (ω : OpEnv) (advName : String) {I : EcInterface}
     (g : EcGame) (fuel : Nat) (A : ModuleImpl I) : SPComp Bool :=
-  lowerGame (ρ.bindModule advName A) g fuel
+  lowerGame (ρ.bindModule advName A) ω g fuel
 
 /-! ## Agreement with the hax loop-phase fold image
 

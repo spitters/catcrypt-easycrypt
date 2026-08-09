@@ -177,6 +177,17 @@ type does not determine. -/
 def emitExpr : {t : EcTy} → EcExpr t → String
   | _, .var t x => "(EcExpr.var " ++ emitTy t ++ " " ++ emitVarId x ++ ")"
   | t, .lit v => "(EcExpr.lit (t := " ++ emitTy t ++ ") " ++ emitVal t v ++ ")"
+  | _, .opApp p s a =>
+      "(EcExpr.opApp " ++ emitStr p ++ " " ++ emitSig s ++ " " ++ emitExpr a ++ ")"
+  | _, @EcExpr.app a b f x =>
+      "(EcExpr.app (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
+        ++ emitExpr f ++ " " ++ emitExpr x ++ ")"
+  | _, @EcExpr.lam a b x body =>
+      "(EcExpr.lam " ++ emitTy a ++ " (b := " ++ emitTy b ++ ") "
+        ++ emitVarId x ++ " " ++ emitExpr body ++ ")"
+  | _, @EcExpr.listMap a b f l =>
+      "(EcExpr.listMap (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
+        ++ emitExpr f ++ " " ++ emitExpr l ++ ")"
   | _, .bnot e => "(EcExpr.bnot " ++ emitExpr e ++ ")"
   | _, .band a b => "(EcExpr.band " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
   | _, .bxor a b => "(EcExpr.bxor " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
@@ -206,12 +217,21 @@ def emitExpr : {t : EcTy} → EcExpr t → String
   | _, .intLe a b => "(EcExpr.intLe " ++ emitExpr a ++ " " ++ emitExpr b ++ ")"
   | _, .mapSet m k v =>
       "(EcExpr.mapSet " ++ emitExpr m ++ " " ++ emitExpr k ++ " " ++ emitExpr v ++ ")"
+  | _, @EcExpr.mapRem a b m k =>
+      "(EcExpr.mapRem (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
+        ++ emitExpr m ++ " " ++ emitExpr k ++ ")"
   | _, @EcExpr.mapMem a b m k =>
       "(EcExpr.mapMem (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
         ++ emitExpr m ++ " " ++ emitExpr k ++ ")"
   | _, @EcExpr.mapGetD a b m k d =>
       "(EcExpr.mapGetD (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
         ++ emitExpr m ++ " " ++ emitExpr k ++ " " ++ emitExpr d ++ ")"
+  | _, @EcExpr.mapFdom a b m =>
+      "(EcExpr.mapFdom (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
+        ++ emitExpr m ++ ")"
+  | _, @EcExpr.mapRng a b m y =>
+      "(EcExpr.mapRng (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
+        ++ emitExpr m ++ " " ++ emitExpr y ++ ")"
   | _, .ite c thn els =>
       "(EcExpr.ite " ++ emitExpr c ++ " " ++ emitExpr thn ++ " "
         ++ emitExpr els ++ ")"
@@ -231,9 +251,39 @@ def emitExpr : {t : EcTy} → EcExpr t → String
   | _, @EcExpr.listMem a l x =>
       "(EcExpr.listMem (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ " "
         ++ emitExpr x ++ ")"
+  | _, @EcExpr.listSet a l i x =>
+      "(EcExpr.listSet (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ " "
+        ++ emitExpr i ++ " " ++ emitExpr x ++ ")"
+  | _, @EcExpr.fsetElems a s =>
+      "(EcExpr.fsetElems (a := " ++ emitTy a ++ ") " ++ emitExpr s ++ ")"
+  | _, @EcExpr.listCat a l1 l2 =>
+      "(EcExpr.listCat (a := " ++ emitTy a ++ ") " ++ emitExpr l1 ++ " "
+        ++ emitExpr l2 ++ ")"
+  | _, @EcExpr.listZip a b l1 l2 =>
+      "(EcExpr.listZip (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
+        ++ emitExpr l1 ++ " " ++ emitExpr l2 ++ ")"
+  | _, @EcExpr.listUniq a l =>
+      "(EcExpr.listUniq (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ ")"
+  | _, @EcExpr.listHas a p l =>
+      "(EcExpr.listHas (a := " ++ emitTy a ++ ") " ++ emitExpr p ++ " "
+        ++ emitExpr l ++ ")"
+  | _, @EcExpr.forallB a x body =>
+      "(EcExpr.forallB " ++ emitTy a ++ " " ++ emitVarId x ++ " "
+        ++ emitExpr body ++ ")"
+  | _, @EcExpr.existsB a x body =>
+      "(EcExpr.existsB " ++ emitTy a ++ " " ++ emitVarId x ++ " "
+        ++ emitExpr body ++ ")"
+  | _, @EcExpr.listFlatten a l =>
+      "(EcExpr.listFlatten (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ ")"
+  | _, @EcExpr.listTake a l n =>
+      "(EcExpr.listTake (a := " ++ emitTy a ++ ") " ++ emitExpr l ++ " "
+        ++ emitExpr n ++ ")"
   | _, @EcExpr.listNth a d l i =>
       "(EcExpr.listNth (a := " ++ emitTy a ++ ") " ++ emitExpr d ++ " "
         ++ emitExpr l ++ " " ++ emitExpr i ++ ")"
+  | _, @EcExpr.listHead a z l =>
+      "(EcExpr.listHead (a := " ++ emitTy a ++ ") " ++ emitExpr z ++ " "
+        ++ emitExpr l ++ ")"
   | _, @EcExpr.fsetSingle a x =>
       "(EcExpr.fsetSingle (a := " ++ emitTy a ++ ") " ++ emitExpr x ++ ")"
   | _, @EcExpr.fsetUnion a s t =>
@@ -242,6 +292,11 @@ def emitExpr : {t : EcTy} → EcExpr t → String
   | _, @EcExpr.fsetMem a s x =>
       "(EcExpr.fsetMem (a := " ++ emitTy a ++ ") " ++ emitExpr s ++ " "
         ++ emitExpr x ++ ")"
+  | _, @EcExpr.fsetCard a s =>
+      "(EcExpr.fsetCard (a := " ++ emitTy a ++ ") " ++ emitExpr s ++ ")"
+  | _, @EcExpr.fsetSubset a s t =>
+      "(EcExpr.fsetSubset (a := " ++ emitTy a ++ ") " ++ emitExpr s ++ " "
+        ++ emitExpr t ++ ")"
 
 /-! ## Distributions -/
 
@@ -266,6 +321,9 @@ def emitDistr : {t : EcTy} → EcDistr t → String
   | _, @EcDistr.letD a b d x body =>
       "(EcDistr.letD (a := " ++ emitTy a ++ ") (b := " ++ emitTy b ++ ") "
         ++ emitDistr d ++ " " ++ emitVarId x ++ " " ++ emitDistr body ++ ")"
+  | _, @EcDistr.dlist a d n =>
+      "(EcDistr.dlist (a := " ++ emitTy a ++ ") " ++ emitDistr d ++ " "
+        ++ emitExpr n ++ ")"
   | _, @EcDistr.prod _ _ d₁ d₂ =>
       "(EcDistr.prod " ++ emitDistr d₁ ++ " " ++ emitDistr d₂ ++ ")"
   | _, @EcDistr.scale t d =>
@@ -297,6 +355,8 @@ def emitStmt : EcStmt → String
         ++ emitTerms (emitStmtList els) ++ ")"
   | .forN n body =>
       "(EcStmt.forN " ++ toString n ++ " " ++ emitTerms (emitStmtList body) ++ ")"
+  | .whileS c body =>
+      "(EcStmt.whileS " ++ emitExpr c ++ " " ++ emitTerms (emitStmtList body) ++ ")"
   | .call p => "(EcStmt.call " ++ emitStr p ++ ")"
   | .callProc q s arg x =>
       "(EcStmt.callProc " ++ emitStr q ++ " " ++ emitSig s ++ " "
