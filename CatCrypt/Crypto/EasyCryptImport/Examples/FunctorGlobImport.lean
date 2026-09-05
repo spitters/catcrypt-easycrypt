@@ -112,7 +112,7 @@ def globImgTables : Except String FormTables := do
           decodeStructure ecPrelude 0 it with
         | .ok S =>
           (match S.globals with
-           | [{ name := "Top.Otp./k", id := 0, ty := .bool }] => true
+           | [{ name := "Top.Otp./k", id := 0, ty := .bool, .. }] => true
            | _ => false)
             && S.procs.isEmpty
         | _ => false)

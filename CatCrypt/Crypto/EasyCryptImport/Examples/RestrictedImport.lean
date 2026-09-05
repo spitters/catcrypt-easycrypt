@@ -157,7 +157,7 @@ private def isBoolLitExpr {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
             && M.interface.sig "gen" == { arg := .unit, res := .bool }
             && M.interface.sig "wipe" == { arg := .unit, res := .bool }
             && (match M.globals with
-                | [{ name := "Top.Otp./k", id := 0, ty := .bool }] => true
+                | [{ name := "Top.Otp./k", id := 0, ty := .bool, .. }] => true
                 | _ => false)
         | _ => false)
 

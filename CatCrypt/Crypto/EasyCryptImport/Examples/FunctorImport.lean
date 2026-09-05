@@ -154,7 +154,7 @@ private def isNotOfVar {t : EcTy} (e : EcExpr t) (x : String) : Bool :=
             && M.interface.sig "gen" == { arg := .unit, res := .bool }
             && M.interface.sig "wipe" == { arg := .unit, res := .bool }
             && (match M.globals with
-                | [{ name := "Top.Otp./k", id := 0, ty := .bool }] => true
+                | [{ name := "Top.Otp./k", id := 0, ty := .bool, .. }] => true
                 | _ => false)
             && (match M.procs "gen" with
                 | { params := ["_"], body := [.sample .bool "kk", .store g e], ret := _ } =>

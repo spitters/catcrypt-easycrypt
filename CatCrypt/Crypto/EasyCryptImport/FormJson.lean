@@ -4222,7 +4222,7 @@ def hoareStatement (name : String) : Except String EcForm := do
           F.procSigs == [("Top.Coin./set", ⟨.unit, .bool⟩),
                          ("Top.Coin./toss", ⟨.unit, .bool⟩)]
             && (match F.tables.globals with
-                | [("Top.Coin./b", { name := "Top.Coin./b", id := 0, ty := .bool })] => true
+                | [("Top.Coin./b", { name := "Top.Coin./b", id := 0, ty := .bool, .. })] => true
                 | _ => false)
         | _ => false)
 

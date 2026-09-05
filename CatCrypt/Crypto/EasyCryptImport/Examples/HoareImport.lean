@@ -114,7 +114,7 @@ private def isBoolLitExpr {t : EcTy} (e : EcExpr t) (v : Bool) : Bool :=
             && M.interface.sig "set" == { arg := .unit, res := .bool }
             && M.interface.sig "toss" == { arg := .unit, res := .bool }
             && (match M.globals with
-                | [{ name := "Top.Coin./b", id := 0, ty := .bool }] => true
+                | [{ name := "Top.Coin./b", id := 0, ty := .bool, .. }] => true
                 | _ => false)
         | _ => false)
 

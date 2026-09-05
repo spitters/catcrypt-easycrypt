@@ -156,7 +156,7 @@ def keyModule : EcModule where
           M.name == "Key" && M.interface.names == ["get"]
             && M.interface.sig "get" == { arg := .unit, res := .bool }
             && (match M.globals with
-                | [{ name := "Top.Key./k", id := 0, ty := .bool }] => true
+                | [{ name := "Top.Key./k", id := 0, ty := .bool, .. }] => true
                 | _ => false)
             && (match M.procs "get" with
                 | { params := ["_"], body := [.sample .bool "kk", .store g e], ret := r } =>
