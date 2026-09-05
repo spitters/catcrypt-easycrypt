@@ -7,10 +7,10 @@
       "type": "git",
       "subDir": null,
       "scope": "",
-      "rev": "91410d23b34a886fcc35765d59a93565906bbe17",
+      "rev": "369584701e682ff45dbb6e1dfc9e7b7407aaa6cd",
       "name": "catcryptCore",
       "manifestFile": "lake-manifest.json",
-      "inputRev": "0.1.0-alpha.5",
+      "inputRev": "0.1.0-alpha.6",
       "inherited": false,
       "configFile": "lakefile.lean"
     },
@@ -31,10 +31,10 @@
       "type": "git",
       "subDir": null,
       "scope": "",
-      "rev": "0cf3b3288a94f658a5322b0d77d96fad1fca4009",
+      "rev": "84bcd25bca8c7d2713ef69982e22178e0fefcc47",
       "name": "\u00abhax-lean\u00bb",
       "manifestFile": "lake-manifest.json",
-      "inputRev": "v0.1.0-alpha.1",
+      "inputRev": "v0.1.0-alpha.2",
       "inherited": false,
       "configFile": "lakefile.lean"
     },
@@ -43,10 +43,10 @@
       "type": "git",
       "subDir": null,
       "scope": "",
-      "rev": "c5ea00351c28e24afc9f0f84379aa41082b1188f",
+      "rev": "81a5d257c8e410db227a6665ed08f64fea08e997",
       "name": "mathlib",
       "manifestFile": "lake-manifest.json",
-      "inputRev": "v4.30.0",
+      "inputRev": "v4.32.0",
       "inherited": false,
       "configFile": "lakefile.lean"
     },
@@ -106,7 +106,7 @@
       "rev": "558915ae105bfd8074e22d597613d1961822adc2",
       "name": "aesop",
       "manifestFile": "lake-manifest.json",
-      "inputRev": "v4.30.0",
+      "inputRev": "v4.32.0",
       "inherited": true,
       "configFile": "lakefile.toml"
     },
@@ -118,7 +118,7 @@
       "rev": "a6e6c34c4ef182f83b219a3a5a385f51f44bdc4c",
       "name": "Qq",
       "manifestFile": "lake-manifest.json",
-      "inputRev": "v4.30.0",
+      "inputRev": "v4.32.0",
       "inherited": true,
       "configFile": "lakefile.toml"
     },
@@ -142,7 +142,7 @@
       "rev": "6b907cf12b2e445ccb7c24bc208ef04a1f39e84c",
       "name": "Cli",
       "manifestFile": "lake-manifest.json",
-      "inputRev": "v4.30.0",
+      "inputRev": "v4.32.0",
       "inherited": true,
       "configFile": "lakefile.toml"
     }
