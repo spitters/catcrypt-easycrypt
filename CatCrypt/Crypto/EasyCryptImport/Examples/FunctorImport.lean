@@ -75,6 +75,8 @@ open CatCrypt.Core CatCrypt.Prob CatCrypt.Relational CatCrypt.Unary CatCrypt.Cry
 open CatCrypt.Crypto.EasyCryptBridge
 open scoped ENNReal
 
+attribute [local implicit_reducible] EcTy.isFin EcGlobal.finLoc
+
 /-! ## The export -/
 
 /-- The exporter's output for the two-functor theory, as text. -/
@@ -103,6 +105,8 @@ def kGlobal : EcGlobal := { name := "Top.Otp./k", id := 0, ty := .bool }
 /-- The `Location` `Otp.k` occupies: its code is finite, so the cell its
 `EcGlobal` denotes is also a finite-typed location. -/
 def kLoc : Location := kGlobal.finLoc rfl
+
+attribute [local implicit_reducible] kGlobal kLoc
 
 /-- The module type of `Otp`, in the order the export declares its names. -/
 def otpInterface : EcInterface where
@@ -203,6 +207,8 @@ theorem otpImpl_wipe :
 def advInterface : EcInterface where
   names := ["guess"]
   sig := fun _ => ⟨.bool, .bool⟩
+
+attribute [local implicit_reducible] advInterface
 
 -- The export's module type declares that name at that signature.
 #guard (match importModType ecPrelude "Adv" functorExport with

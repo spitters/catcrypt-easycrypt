@@ -90,6 +90,8 @@ open CatCrypt.Core CatCrypt.Prob CatCrypt.Relational CatCrypt.Unary CatCrypt.Cry
 open CatCrypt.Crypto.EasyCryptBridge
 open scoped ENNReal
 
+attribute [local implicit_reducible] EcTy.isFin EcGlobal.finLoc
+
 /-! ## The export -/
 
 /-- The exporter's output for the two-parameter functor theory, as text. -/
@@ -121,6 +123,8 @@ def srcInterface : EcInterface where
   names := ["get"]
   sig := fun _ => ⟨.unit, .bool⟩
 
+attribute [local implicit_reducible] advInterface srcInterface
+
 -- The export's two module types declare those names at those signatures.
 #guard (match importModType ecPrelude "Adv" functor2Export,
               importModType ecPrelude "Src" functor2Export with
@@ -138,6 +142,8 @@ def kGlobal : EcGlobal := { name := "Top.Key./k", id := 0, ty := .bool }
 /-- The `Location` `Key.k` occupies: its code is finite, so the cell its
 `EcGlobal` denotes is also a finite-typed location. -/
 def kLoc : Location := kGlobal.finLoc rfl
+
+attribute [local implicit_reducible] kGlobal kLoc
 
 /-- The imported concrete module `Key`: `get` samples a bit, stores it and
 returns it. -/

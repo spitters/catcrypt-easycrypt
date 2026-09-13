@@ -73,6 +73,8 @@ def logGlobal : EcGlobal := { name := "RO.log", id := 92001, ty := logTy }
 
 @[simp] theorem logGlobal_ty : logGlobal.ty = logTy := rfl
 
+attribute [local implicit_reducible] EcTy.isFin EcTy.hasEq EcGlobal.loc logGlobal
+
 /-- `RO`'s memory footprint. -/
 def roLocs : LocSet := {logGlobal.id}
 

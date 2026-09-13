@@ -74,6 +74,8 @@ open CatCrypt.Crypto.EasyCryptBridge CatCrypt.Crypto.ForkingLemma
 open CatCrypt.NonUniform
 open scoped ENNReal
 
+attribute [local implicit_reducible] EcTy.isFin
+
 /-! ## The fixture -/
 
 /-- The exporter's output for the binder and distribution-operator theory, as

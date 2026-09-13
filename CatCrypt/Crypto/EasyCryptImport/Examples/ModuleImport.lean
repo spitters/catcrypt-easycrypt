@@ -70,6 +70,8 @@ open CatCrypt.Core CatCrypt.Prob CatCrypt.Relational CatCrypt.Crypto CatCrypt.Un
 open CatCrypt.Prob.XorBij
 open CatCrypt.Crypto.EasyCryptBridge
 
+attribute [local implicit_reducible] EcTy.isFin EcGlobal.finLoc
+
 /-! ## The concrete module `Otp` -/
 
 /-- `Otp`'s single global `var k : bool`, at a stable heap location id. -/
@@ -78,6 +80,8 @@ def kGlobal : EcGlobal := { name := "Otp.k", id := 90001, ty := .bool }
 /-- The `Location` `Otp.k` occupies: its code is finite, so the cell its
 `EcGlobal` denotes is also a finite-typed location. -/
 def kLoc : Location := kGlobal.finLoc rfl
+
+attribute [local implicit_reducible] kGlobal kLoc
 
 /-- `Otp`'s memory footprint — the image of EasyCrypt's `glob Otp`. -/
 def otpLocs : LocSet := {kGlobal.id}
@@ -129,6 +133,8 @@ noncomputable def otpImpl : ModuleImpl otpInterface := lowerModule ProcEnv.empty
 def advInterface : EcInterface where
   names := ["guess"]
   sig := fun _ => ⟨.bool, .bool⟩
+
+attribute [local implicit_reducible] advInterface
 
 /-- An adversary of the interface `ADV` that echoes the ciphertext it is handed
 and never touches the heap. -/

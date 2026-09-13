@@ -74,6 +74,8 @@ open CatCrypt.Core CatCrypt.Prob CatCrypt.Relational CatCrypt.Crypto
 open CatCrypt.Prob.XorBij
 open CatCrypt.Crypto.EasyCryptBridge
 
+attribute [local implicit_reducible] EcTy.isFin
+
 /-- The body of the `step` procedure for message bit `m`: sample a fresh key `k`
 and fold it into the accumulator, `acc <- acc ^ k ^ m`. -/
 def stepBody (m : Bool) : List EcStmt :=

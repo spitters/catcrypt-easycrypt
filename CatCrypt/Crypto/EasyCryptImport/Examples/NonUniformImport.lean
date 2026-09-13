@@ -52,6 +52,8 @@ open CatCrypt.Crypto.EasyCryptBridge CatCrypt.Crypto.ForkingLemma
 open CatCrypt.NonUniform
 open scoped ENNReal
 
+attribute [local implicit_reducible] EcTy.isFin
+
 /-! ## The distribution -/
 
 /-- The distribution expression `dbool \ (fun b => !b)` at the lambda binder `k`,

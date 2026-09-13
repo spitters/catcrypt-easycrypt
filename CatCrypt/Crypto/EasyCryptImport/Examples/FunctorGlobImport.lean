@@ -69,6 +69,8 @@ open CatCrypt.Crypto.EasyCryptImport.RestrictedImport
 open CatCrypt.Crypto.EasyCryptImport.AdversaryEquivImport
 open scoped ENNReal
 
+attribute [local implicit_reducible] EcTy.isFin EcGlobal.finLoc kGlobal kLoc advInterface
+
 /-! ## The export -/
 
 /-- The exporter's output for the functor-image-footprint theory, as text. -/

@@ -64,6 +64,8 @@ open CatCrypt.Core CatCrypt.Prob CatCrypt.Unary CatCrypt.Crypto
 open CatCrypt.Crypto.EasyCryptBridge
 open scoped ENNReal
 
+attribute [local implicit_reducible] EcTy.isFin EcGlobal.finLoc
+
 /-! ## The module
 
 `Coin.b` is the module's one `var` declaration, so it is a heap `Location`, at the
@@ -75,6 +77,8 @@ def bGlobal : EcGlobal := { name := "Top.Coin./b", id := 0, ty := .bool }
 /-- The `Location` `Coin.b` occupies: its code is finite, so the cell its
 `EcGlobal` denotes is also a finite-typed location. -/
 def bLoc : Location := bGlobal.finLoc rfl
+
+attribute [local implicit_reducible] bGlobal bLoc
 
 /-- The module type of `Coin`, in the order the export declares its names. -/
 def coinInterface : EcInterface where

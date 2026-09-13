@@ -81,6 +81,8 @@ open CatCrypt.Prob.XorBij
 open CatCrypt.Crypto.EasyCryptBridge
 open scoped ENNReal
 
+attribute [local implicit_reducible] EcTy.isFin EcGlobal.finLoc
+
 /-! ## The export -/
 
 /-- The exporter's output for the restricted-adversary theory, as text. -/
@@ -111,6 +113,8 @@ def kGlobal : EcGlobal := { name := "Top.Otp./k", id := 0, ty := .bool }
 /-- The `Location` `Otp.k` occupies: its code is finite, so the cell its
 `EcGlobal` denotes is also a finite-typed location. -/
 def kLoc : Location := kGlobal.finLoc rfl
+
+attribute [local implicit_reducible] kGlobal kLoc
 
 /-- The module type of `Otp`, in the order the export declares its names. -/
 def otpInterface : EcInterface where
@@ -215,6 +219,8 @@ theorem otpImpl_wipe :
 def advInterface : EcInterface where
   names := ["guess"]
   sig := fun _ => ⟨.bool, .bool⟩
+
+attribute [local implicit_reducible] advInterface
 
 -- The export's module type declares that name at that signature.
 #guard (match importModType ecPrelude "Adv" restrExport with

@@ -47,6 +47,8 @@ open CatCrypt.Core CatCrypt.Prob CatCrypt.Relational CatCrypt.Crypto
 open CatCrypt.Prob.XorBij
 open CatCrypt.Crypto.EasyCryptBridge
 
+attribute [local implicit_reducible] EcTy.isFin
+
 /-- The imported one-time-pad game for a fixed message bit `m`:
 sample the key `k`, set the ciphertext `c := k ^ m`, and return `c`. -/
 def otpGame (m : Bool) : EcGame where

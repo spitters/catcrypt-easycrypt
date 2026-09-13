@@ -63,6 +63,8 @@ namespace CatCrypt.Crypto.EasyCryptImport.Examples.CorePairSurjImport
 open CatCrypt.Core
 open CatCrypt.Crypto.EasyCryptImport
 
+attribute [local implicit_reducible] EcPolyForm
+
 /-! ## The imported statement -/
 
 /-- The tables `pairS` decodes against: the prelude alone, since the statement
