@@ -32,14 +32,14 @@ lean_lib CatCrypt where
 -- the lowering and the statement translation land on.
 --
 require catcryptCore from git
-  "https://github.com/spitters/CatCrypt-core.git" @ "0.1.0-alpha.6"
+  "https://github.com/spitters/CatCrypt-core.git" @ "2adfac7c5162ab0e89c9b494d53ee4b2fdc75613"
 
 -- `HaxLean.JsonSize`: the JSON size measure the two decoders recurse on, which is
 -- what makes them total `def`s rather than `partial def`s.
 require «hax-lean» from git
-  "https://github.com/spitters/hax-lean.git" @ "v0.1.0-alpha.2"
+  "https://github.com/spitters/hax-lean.git" @ "e74e825c080eaa4a2c8c4f58ab7cbbab79d8f427"
 
 -- mathlib LAST so its proofwidgets/aesop versions win on conflicts;
 -- this is required for `lake exe cache get` to find oleans.
 require mathlib from git
-  "https://github.com/leanprover-community/mathlib4" @ "v4.32.0"
+  "https://github.com/leanprover-community/mathlib4" @ "v4.33.1"
